@@ -220,14 +220,22 @@ extern "C"
 
 #define EOS_DFW_ENABLE 0        /**< Whether to enable delayed file writer */
 
-/************************** Battery detection **************************/
-
-#define EOS_BATTERY_DISPLAY_UPDATE_MS 5 * 60 * 1000 /**< Battery level display update time */
-
 /************************** Volume configuration **************************/
 
 #define EOS_SPEAKER_VOLUME_MIN 0
 #define EOS_SPEAKER_VOLUME_MAX 100
+
+/************************** Language configuration **************************/
+
+/**
+ * Default system language for first boot
+ * Available options:
+ *  - 0 (LANG_EN):  English
+ *  - 1 (LANG_ZH):  Simple Chinese
+ * This is only used when the system starts for the first time.
+ * If the config service has a language setting, it will be used instead.
+ */
+#define EOS_CONFIG_DEFAULT_LANGUAGE 0
 
 /************************** MISC **************************/
 

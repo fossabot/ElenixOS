@@ -17,6 +17,7 @@ extern "C" {
 #include "eos_config.h"
 #include "eos_storage_paths.h"
 #include "cJSON.h"
+#include "eos_lang.h"
 /* Public macros ----------------------------------------------*/
 /* Configuration Keys */
 /************************** Keys for system configuration information **************************/
@@ -34,7 +35,8 @@ extern "C" {
 #define EOS_CONFIG_KEY_APP_ORDER_ARRAY "app_order"
 /************************** Default values **************************/
 #define EOS_CONFIG_DEFAULT_DEVICE_NAME "Elenix Watch"
-#define EOS_CONFIG_DEFAULT_LANG_STR "English"
+/* Default language string is determined by EOS_CONFIG_DEFAULT_LANGUAGE in eos_config.h */
+#define EOS_CONFIG_DEFAULT_LANG_STR (EOS_CONFIG_DEFAULT_LANGUAGE == 1 ? "简体中文" : "English")
 #define EOS_CONFIG_DEFAULT_WATCHFACE_ID_STR "cn.sab1e.clock"
 /* Public typedefs --------------------------------------------*/
 
