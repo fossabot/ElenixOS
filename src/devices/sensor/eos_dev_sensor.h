@@ -27,18 +27,18 @@ extern "C" {
  */
 typedef enum {
     EOS_SENSOR_TYPE_UNKNOWN = 0,
-    EOS_SENSOR_TYPE_ACCE,
-    EOS_SENSOR_TYPE_GYRO,
-    EOS_SENSOR_TYPE_HR,
-    EOS_SENSOR_TYPE_SPO2,
-    EOS_SENSOR_TYPE_LIGHT,
-    EOS_SENSOR_TYPE_PROXIMITY,
-    EOS_SENSOR_TYPE_ECG,
-    EOS_SENSOR_TYPE_TEMP,
-    EOS_SENSOR_TYPE_MAG,
-    EOS_SENSOR_TYPE_BARO,
-    EOS_SENSOR_TYPE_CAP,
-    EOS_SENSOR_TYPE_STEP,
+    EOS_SENSOR_TYPE_ACCE,       /**< Accelerometer */
+    EOS_SENSOR_TYPE_GYRO,       /**< Gyroscope */
+    EOS_SENSOR_TYPE_HR,         /**< Heart Rate Sensor */
+    EOS_SENSOR_TYPE_SPO2,       /**< SpO2 Sensor */
+    EOS_SENSOR_TYPE_LIGHT,      /**< Ambient Light Sensor */
+    EOS_SENSOR_TYPE_PROXIMITY,  /**< Proximity Sensor */
+    EOS_SENSOR_TYPE_ECG,        /**< ECG Sensor */
+    EOS_SENSOR_TYPE_TEMP,       /**< Temperature Sensor */
+    EOS_SENSOR_TYPE_MAG,        /**< Magnetometer */
+    EOS_SENSOR_TYPE_BARO,       /**< Barometer */
+    EOS_SENSOR_TYPE_CAP,        /**< Capacitance Sensor */
+    EOS_SENSOR_TYPE_STEP,       /**< Step Counter */
     EOS_SENSOR_TYPE_MAX
 } eos_sensor_type_t;
 

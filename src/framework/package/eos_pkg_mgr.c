@@ -43,10 +43,10 @@ eos_result_t eos_pkg_read_header(const char *pkg_path, eos_pkg_header_t *header)
         return EOS_ERR_FILE_ERROR;
     }
 
-    // 初始化包头结构体
+    // Initialize header with zeros
     memset(header, 0, sizeof(eos_pkg_header_t));
 
-    // 读取magic
+    // Read magic number
     if (eos_storage_file_seek(fp, EOS_PKG_MAGIC_OFFSET) != 0 ||
         eos_storage_file_read(fp, header->magic, 4) != 4)
     {
@@ -55,7 +55,7 @@ eos_result_t eos_pkg_read_header(const char *pkg_path, eos_pkg_header_t *header)
         return EOS_ERR_FILE_ERROR;
     }
 
-    // 读取pkg_name
+    // Read package name
     if (eos_storage_file_seek(fp, EOS_PKG_NAME_OFFSET) != 0 ||
         eos_storage_file_read(fp, header->pkg_name, EOS_PKG_NAME_LEN_MAX) != EOS_PKG_NAME_LEN_MAX)
     {
@@ -65,7 +65,7 @@ eos_result_t eos_pkg_read_header(const char *pkg_path, eos_pkg_header_t *header)
     }
     header->pkg_name[EOS_PKG_NAME_LEN_MAX - 1] = '\0';
 
-    // 读取pkg_id
+    // Read package ID
     if (eos_storage_file_seek(fp, EOS_PKG_ID_OFFSET) != 0 ||
         eos_storage_file_read(fp, header->pkg_id, EOS_PKG_ID_LEN_MAX) != EOS_PKG_ID_LEN_MAX)
     {
@@ -75,7 +75,7 @@ eos_result_t eos_pkg_read_header(const char *pkg_path, eos_pkg_header_t *header)
     }
     header->pkg_id[EOS_PKG_ID_LEN_MAX - 1] = '\0';
 
-    // 读取pkg_version
+    // Read package version
     if (eos_storage_file_seek(fp, EOS_PKG_VERSION_OFFSET) != 0 ||
         eos_storage_file_read(fp, header->pkg_version, EOS_PKG_VERSION_LEN_MAX) != EOS_PKG_VERSION_LEN_MAX)
     {
@@ -85,7 +85,7 @@ eos_result_t eos_pkg_read_header(const char *pkg_path, eos_pkg_header_t *header)
     }
     header->pkg_version[EOS_PKG_VERSION_LEN_MAX - 1] = '\0';
 
-    // 读取file_count
+    // Read file_count
     if (eos_storage_file_seek(fp, EOS_PKG_FILE_COUNT_OFFSET) != 0 ||
         eos_storage_file_read(fp, &header->file_count, sizeof(uint32_t)) != sizeof(uint32_t))
     {
@@ -94,7 +94,7 @@ eos_result_t eos_pkg_read_header(const char *pkg_path, eos_pkg_header_t *header)
         return EOS_ERR_FILE_ERROR;
     }
 
-    // 读取reserved字段
+    // Read reserved field
     if (eos_storage_file_seek(fp, EOS_PKG_RESERVED_OFFSET) != 0 ||
         eos_storage_file_read(fp, &header->reserved, sizeof(uint32_t)) != sizeof(uint32_t))
     {
@@ -167,7 +167,7 @@ eos_result_t eos_pkg_mgr_unpack(const char *pkg_path, const char *output_path, c
         return EOS_ERR_FILE_ERROR;
     }
 
-    // 定位到文件表位置 (紧接在文件头之后)
+    // Seek to the file table position (immediately after the file header)
     if (eos_storage_file_seek(fp, EOS_PKG_TABLE_OFFSET) != 0)
     {
         eos_storage_file_close(fp);
@@ -183,13 +183,13 @@ eos_result_t eos_pkg_mgr_unpack(const char *pkg_path, const char *output_path, c
         return EOS_ERR_FILE_ERROR;
     }
 
-    // 维护当前文件表偏移，避免使用底层文件结构获取 current pos
+    // Track the current file table offset instead of querying the underlying file position
     uint32_t table_pos = EOS_PKG_TABLE_OFFSET;
 
-    // 处理每个文件条目
+    // Process each file entry
     for (uint32_t i = 0; i < header.file_count; i++)
     {
-        // 读取文件名长度
+        // Read the file name length
         uint32_t name_len;
         if (eos_storage_file_read(fp, &name_len, sizeof(uint32_t)) != sizeof(uint32_t))
         {
@@ -199,7 +199,7 @@ eos_result_t eos_pkg_mgr_unpack(const char *pkg_path, const char *output_path, c
         }
         table_pos += sizeof(uint32_t);
 
-        // 检查文件名长度是否合理
+        // Validate the file name length
         if (name_len > PATH_MAX)
         {
             eos_storage_file_close(fp);
@@ -207,7 +207,7 @@ eos_result_t eos_pkg_mgr_unpack(const char *pkg_path, const char *output_path, c
             return EOS_ERR_FILE_ERROR;
         }
 
-        // 动态分配内存
+        // Allocate memory dynamically
         char *name = (char *)eos_malloc(name_len + 1);
         if (!name)
         {
@@ -216,7 +216,7 @@ eos_result_t eos_pkg_mgr_unpack(const char *pkg_path, const char *output_path, c
             return EOS_ERR_MEM;
         }
 
-        // 读取文件名
+        // Read the file name
         if (eos_storage_file_read(fp, name, name_len) != (int)name_len)
         {
             eos_free(name);
@@ -227,7 +227,7 @@ eos_result_t eos_pkg_mgr_unpack(const char *pkg_path, const char *output_path, c
         name[name_len] = '\0';
         table_pos += name_len;
 
-        // 读取条目其他字段
+        // Read the remaining entry fields
         uint32_t is_dir, offset, size;
         if (eos_storage_file_read(fp, &is_dir, sizeof(uint32_t)) != sizeof(uint32_t) ||
             eos_storage_file_read(fp, &offset, sizeof(uint32_t)) != sizeof(uint32_t) ||
@@ -240,16 +240,16 @@ eos_result_t eos_pkg_mgr_unpack(const char *pkg_path, const char *output_path, c
         }
         table_pos += sizeof(uint32_t) * 3;
 
-        // 计算下一条目在表中的偏移
+        // Compute the offset of the next entry in the table
         uint32_t next_entry_pos = table_pos;
 
-        // 构建完整输出路径
+        // Build the full output path
         char full_path[PATH_MAX] = {0};
         snprintf(full_path, sizeof(full_path), "%s/%s", output_path, name);
 
         if (is_dir)
         {
-            // 创建目录
+            // Create the directory
             if (eos_storage_mkdir_recursive(full_path) != EOS_OK)
             {
                 eos_free(name);
@@ -261,7 +261,7 @@ eos_result_t eos_pkg_mgr_unpack(const char *pkg_path, const char *output_path, c
         }
         else
         {
-            // 验证文件偏移量和大小
+            // Validate the file offset and size
             if (offset < EOS_PKG_TABLE_OFFSET || offset >= file_size)
             {
                 eos_free(name);
@@ -279,7 +279,7 @@ eos_result_t eos_pkg_mgr_unpack(const char *pkg_path, const char *output_path, c
                 return EOS_ERR_FILE_ERROR;
             }
 
-            // 确保父目录存在
+            // Ensure the parent directory exists
             char *last_slash = strrchr(full_path, '/');
             if (last_slash)
             {
@@ -294,7 +294,7 @@ eos_result_t eos_pkg_mgr_unpack(const char *pkg_path, const char *output_path, c
                 *last_slash = '/';
             }
 
-            // 创建文件并写入数据
+            // Create the file and write data
             eos_file_t out_fp = eos_storage_file_open_write(full_path);
             if (out_fp == EOS_FILE_INVALID)
             {
@@ -304,7 +304,7 @@ eos_result_t eos_pkg_mgr_unpack(const char *pkg_path, const char *output_path, c
                 return EOS_ERR_FILE_ERROR;
             }
 
-            // 定位到文件数据
+            // Seek to the file data
             if (eos_storage_file_seek(fp, offset) != 0)
             {
                 eos_storage_file_close(out_fp);
@@ -314,7 +314,7 @@ eos_result_t eos_pkg_mgr_unpack(const char *pkg_path, const char *output_path, c
                 return EOS_ERR_FILE_ERROR;
             }
 
-            // 逐块读取并写入文件
+            // Read and write the file in chunks
             uint32_t remaining = size;
             uint8_t buffer[EOS_PKG_READ_BLOCK];
             while (remaining > 0)
@@ -343,7 +343,7 @@ eos_result_t eos_pkg_mgr_unpack(const char *pkg_path, const char *output_path, c
             eos_storage_file_close(out_fp);
             EOS_LOG_D("Created file: %s (size: %u bytes)", full_path, size);
 
-            // 恢复到文件表的下一条目位置，准备读取下一个文件名
+            // Restore the file table position for the next entry before reading the next file name
             if (eos_storage_file_seek(fp, next_entry_pos) != 0)
             {
                 eos_free(name);

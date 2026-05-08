@@ -21,12 +21,6 @@ static eos_dev_battery_t _battery_dev = {0};
 
 /* Function Implementations -----------------------------------*/
 
-/**
- * @brief Register battery device operations
- *
- * @param ops Pointer to battery device operations structure
- * @return None
- */
 void eos_dev_battery_register(const eos_battery_dev_ops_t *ops, eos_charge_mAh_t design_capacity)
 {
     if (!ops) {
