@@ -20,7 +20,6 @@
 #include "script_engine_core.h"
 #include "eos_theme.h"
 #include "eos_port.h"
-#include "eos_misc.h"
 #include "eos_icon.h"
 #include "eos_config.h"
 #include "eos_anim.h"

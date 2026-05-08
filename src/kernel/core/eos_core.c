@@ -28,7 +28,6 @@
 #include "eos_app.h"
 #include "script_engine_core.h"
 #include "eos_watchface.h"
-#include "eos_misc.h"
 #include "eos_watchface_list.h"
 #include "eos_app_list.h"
 #include "eos_theme.h"

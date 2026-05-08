@@ -18,7 +18,6 @@
 #include "eos_dispatcher.h"
 #include "eos_theme.h"
 #include "eos_lang.h"
-#include "eos_misc.h"
 #include "eos_basic_widgets.h"
 #include "eos_app_header.h"
 #include "eos_control_center.h"

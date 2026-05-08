@@ -17,7 +17,6 @@
 #include "eos_log.h"
 #include "eos_cqueue.h"
 #include "eos_service_storage.h"
-#include "eos_misc.h"
 #include "eos_port.h"
 #include "eos_mem.h"
 /* Macros and Definitions -------------------------------------*/

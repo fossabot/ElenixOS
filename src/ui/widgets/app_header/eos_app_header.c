@@ -18,7 +18,6 @@
 #include "eos_theme.h"
 #include "eos_font.h"
 #include "eos_basic_widgets.h"
-#include "eos_misc.h"
 #include "eos_anim.h"
 #include "eos_mem.h"
 #include "eos_activity.h"
