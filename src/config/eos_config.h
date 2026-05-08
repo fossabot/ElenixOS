@@ -253,6 +253,12 @@ extern "C"
 // Whether to enable colorful log
 #define EOS_LOG_USE_COLOR 0
 
+// Maximum number of log listeners
+#define EOS_LOG_MAX 8
+
+// Whether to enable standard output log listener
+#define EOS_LOG_ENABLE_STD 1
+
 /* Configuration end ----------------------------------------------------*/
 
 #ifdef __cplusplus

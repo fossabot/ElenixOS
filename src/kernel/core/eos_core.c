@@ -35,8 +35,6 @@
 #include "eos_config_internal.h"
 #include "jerryscript.h"
 #include "eos_font.h"
-#define EOS_LOG_TAG "Core"
-#include "eos_log.h"
 #include "eos_service_sensor.h"
 #include "eos_dispatcher.h"
 #include "eos_anim.h"
@@ -53,11 +51,36 @@
 #include "eos_icon.h"
 #include "eos_activity.h"
 #include "eos_std_widgets.h"
+#define EOS_LOG_TAG "Core"
+#include "eos_log.h"
 /* Macros and Definitions -------------------------------------*/
 
 /* Variables --------------------------------------------------*/
 static bool g_is_inited = false;
 /* Function Implementations -----------------------------------*/
+
+static const char *months = "JanFebMarAprMayJunJulAugSepOctNovDec";
+
+static void _format_build_date(char *out, size_t size)
+{
+    char month_str[4];
+    int day, year;
+
+    sscanf(__DATE__, "%3s %d %d", month_str, &day, &year);
+
+    int month = (strstr(months, month_str) - months) / 3 + 1;
+
+    snprintf(out, size, "%04d-%02d-%02d", year, month, day);
+}
+
+static void _print_boot_info(void)
+{
+    char build_date[16];
+    _format_build_date(build_date, sizeof(build_date));
+    EOS_LOG_I("===========================================");
+    EOS_LOG_I("ElenixOS v" ELENIX_OS_VERSION_FULL " (build %s)", build_date);
+    EOS_LOG_I("===========================================");
+}
 
 static lv_indev_t *_get_key_indev()
 {
@@ -124,8 +147,11 @@ void eos_logo_play(bool anim)
 
 void eos_init(void)
 {
+    /************************** Log system initialization **************************/
+    eos_service_log_init();
 
     eos_logo_play(true);
+    _print_boot_info();
     /************************** System components initialization **************************/
 #if EOS_DFW_ENABLE
     eos_dfw_init();
