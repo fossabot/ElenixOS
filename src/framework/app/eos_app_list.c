@@ -36,6 +36,7 @@
 #include "eos_std_widgets.h"
 #include "eos_activity.h"
 #include "eos_bubble_grid.h"
+#include "eos_accordion.h"
 #ifdef EOS_ENABLE_TEST_APP
 #include "eos_test.h"
 #endif
@@ -178,8 +179,42 @@ static void _app_on_enter(eos_activity_t *a)
             eos_lang_get_text(STR_ID_APP_RUN_ERR_TITLE),
             eos_lang_get_text(STR_ID_APP_RUN_ERR));
         char info_str[1024];
-        snprintf(info_str, sizeof(info_str), "Code: %d\nAppID: %s\nError: %s", ret, ctx->app_id, script_engine_get_error_info());
+        snprintf(info_str, sizeof(info_str),
+                 "Code: %d\nAppID: %s\nError: %s",
+                 ret, ctx->app_id, script_engine_get_error_info());
         lv_obj_t *err_label = eos_list_add_comment(list, info_str);
+
+        eos_accordion_t *accordion = eos_accordion_create(list, eos_lang_get_text(STR_ID_APP_RUN_ERR_BACKTRACE));
+        lv_obj_set_width(accordion->container, lv_pct(90));
+        lv_obj_t *accordion_content = accordion->content;
+        lv_obj_t *backtrace_label = lv_label_create(accordion_content);
+
+        lv_obj_set_style_text_color(accordion->title_label, EOS_COLOR_GREY_1, 0);
+        lv_obj_set_style_text_color(accordion->arrow_label, EOS_COLOR_GREY_1, 0);
+        lv_obj_set_style_text_color(backtrace_label, EOS_COLOR_GREY_1, 0);
+
+        uint32_t backtrace_count = script_engine_get_backtrace_count();
+        if (backtrace_count > 0)
+        {
+            const script_error_location_t *backtrace = script_engine_get_error_backtrace(NULL);
+            if (backtrace)
+            {
+                char backtrace_str[1024] = {0};
+                char temp_str[256];
+                for (uint32_t i = 0; i < backtrace_count; i++)
+                {
+                    snprintf(temp_str, sizeof(temp_str), "#%u: %s:%u:%u\n",
+                             i, backtrace[i].source_name, backtrace[i].line, backtrace[i].column);
+                    strncat(backtrace_str, temp_str, sizeof(backtrace_str) - strlen(backtrace_str) - 1);
+                }
+                lv_label_set_text(backtrace_label, backtrace_str);
+            }
+        }
+        else
+        {
+            lv_label_set_text(backtrace_label, "No backtrace available");
+        }
+
         lv_obj_t *btn = eos_button_create(list, eos_lang_get_text(STR_ID_BACK), eos_activity_back_cb, NULL);
         EOS_LOG_E("Application encounter a fatal error");
     }
