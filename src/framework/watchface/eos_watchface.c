@@ -47,15 +47,18 @@ static eos_activity_t *_watchface_activity = NULL;
 
 static void eos_watchface_on_enter(eos_activity_t *a);
 static void eos_watchface_on_destroy(eos_activity_t *a);
+static void eos_watchface_on_pause(eos_activity_t *a);
+static void eos_watchface_on_resume(eos_activity_t *a);
 static void _builtin_watchface_time_update_cb(lv_timer_t *timer);
 static void _builtin_watchface_delete_cb(lv_event_t *e);
 static void _create_builtin_watchface(eos_activity_t *a);
+static void _start_watchface(eos_activity_t *a);
 
 static const eos_activity_lifecycle_t watchface_lifecycle = {
     .on_enter = eos_watchface_on_enter,
     .on_destroy = eos_watchface_on_destroy,
-    .on_pause = NULL,
-    .on_resume = NULL,
+    .on_pause = eos_watchface_on_pause,
+    .on_resume = eos_watchface_on_resume,
 };
 /* Function Implementations -----------------------------------*/
 
@@ -330,23 +333,16 @@ static void _create_builtin_watchface(eos_activity_t *a)
     }
 }
 
-void eos_watchface_on_enter(eos_activity_t *a)
+static void _start_watchface(eos_activity_t *a)
 {
-    EOS_LOG_I("Enter watchface activity");
     lv_obj_t *view = lv_obj_create(eos_activity_get_root_screen());
     lv_obj_remove_style_all(view);
     lv_obj_add_style(view, eos_theme_get_view_style(), 0);
     eos_activity_set_view(a, view);
 
-    // Show message list and control center
-    eos_msg_list_show();
-    eos_control_center_show();
-    // Get watchface ID from JSON
     char wf_id[EOS_PKG_ID_LEN_MAX];
     char *selected_wf_id = eos_config_get_string(EOS_CONFIG_KEY_WATCHFACE_ID_STR, "cn.sab1e.clock");
-    snprintf(wf_id, sizeof(wf_id),
-             "%s",
-             selected_wf_id);
+    snprintf(wf_id, sizeof(wf_id), "%s", selected_wf_id);
     eos_free(selected_wf_id);
 
     if (!eos_watchface_list_contains(wf_id))
@@ -361,7 +357,6 @@ void eos_watchface_on_enter(eos_activity_t *a)
         return;
     }
 
-    // Get watchface related info directly through watchface ID and store to script_package
     char manifest_path[EOS_FS_PATH_MAX];
     snprintf(manifest_path, sizeof(manifest_path),
              EOS_WATCHFACE_INSTALLED_DIR "%s/" EOS_WATCHFACE_MANIFEST_FILE_NAME,
@@ -378,7 +373,6 @@ void eos_watchface_on_enter(eos_activity_t *a)
              EOS_WATCHFACE_INSTALLED_DIR "%s/" EOS_WATCHFACE_SCRIPT_ENTRY_FILE_NAME,
              wf_id);
 
-    // Set script base path for resolving relative path module imports
     char base_path[EOS_FS_PATH_MAX];
     snprintf(base_path, sizeof(base_path), EOS_WATCHFACE_INSTALLED_DIR "%s/", wf_id);
     pkg.base_path = eos_strdup(base_path);
@@ -389,13 +383,10 @@ void eos_watchface_on_enter(eos_activity_t *a)
         return;
     }
     pkg.script_str = eos_storage_read_file(script_path);
-    // Set long press callback to enter watchface list
     lv_obj_add_event_cb(eos_activity_get_view(a), _watchface_long_pressed_cb, LV_EVENT_LONG_PRESSED, NULL);
-    // Run watchface script (script must not block thread)
     script_engine_result_t ret = script_engine_run(&pkg);
     if (ret != SE_OK)
     {
-        // Display error information
         lv_obj_t *list = eos_std_info_create(
             eos_activity_get_view(a),
             EOS_COLOR_RED,
@@ -445,6 +436,14 @@ void eos_watchface_on_enter(eos_activity_t *a)
     eos_pkg_free(&pkg);
 }
 
+void eos_watchface_on_enter(eos_activity_t *a)
+{
+    EOS_LOG_I("Enter watchface activity");
+    eos_msg_list_show();
+    eos_control_center_show();
+    _start_watchface(a);
+}
+
 void eos_watchface_on_destroy(eos_activity_t *a)
 {
     EOS_LOG_I("Exit watchface activity");
@@ -460,6 +459,30 @@ void eos_watchface_on_destroy(eos_activity_t *a)
 
     // Delete View
     lv_obj_delete(eos_activity_get_view(a));
+}
+
+void eos_watchface_on_pause(eos_activity_t *a)
+{
+    EOS_LOG_I("Pause watchface activity");
+    if(script_engine_request_stop() != SE_OK)
+    {
+        EOS_LOG_E("Script engine request stop failed");
+    }
+
+    // Hide control center and message list
+    eos_control_center_hide();
+    eos_msg_list_hide();
+
+    // Delete View to stop built-in timer
+    lv_obj_delete(eos_activity_get_view(a));
+}
+
+void eos_watchface_on_resume(eos_activity_t *a)
+{
+    EOS_LOG_I("Resume watchface activity");
+    eos_msg_list_show();
+    eos_control_center_show();
+    _start_watchface(a);
 }
 
 eos_activity_t *eos_watchface_get_activity(void)

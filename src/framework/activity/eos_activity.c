@@ -66,6 +66,7 @@ struct eos_activity_t
     bool is_app_header_time_only;
     lv_color_t app_header_time_only_text_color;
     bool destroy_on_exit;
+    bool has_started;
     struct
     {
         lv_color_t color;
@@ -293,7 +294,7 @@ static void _anim_clean_up_activity_deferred(void *user_data)
     eos_free(anim_ctx);
 }
 
-static void _activity_switch_to(eos_activity_t *next_activity)
+static void _activity_switch_to(eos_activity_t *next_activity, bool is_returning)
 {
     EOS_CHECK_PTR_RETURN(next_activity);
     eos_activity_t *cur_activity = g_activity_ctx.current_activity;
@@ -341,17 +342,17 @@ static void _activity_switch_to(eos_activity_t *next_activity)
     eos_control_center_hide();
     eos_msg_list_hide();
 
-    if (cur_activity && cur_activity->lifecycle && cur_activity->lifecycle->on_pause)
+    if (!is_returning && cur_activity && cur_activity->lifecycle && cur_activity->lifecycle->on_pause)
     {
         cur_activity->lifecycle->on_pause(cur_activity);
     }
 
-    if (next_activity->lifecycle && next_activity->lifecycle->on_enter)
+    if (!next_activity->has_started && next_activity->lifecycle && next_activity->lifecycle->on_enter)
     {
         next_activity->lifecycle->on_enter(next_activity);
+        next_activity->has_started = true;
     }
-
-    if (next_activity->lifecycle && next_activity->lifecycle->on_resume)
+    else if (is_returning && next_activity->has_started && next_activity->lifecycle && next_activity->lifecycle->on_resume)
     {
         next_activity->lifecycle->on_resume(next_activity);
     }
@@ -961,6 +962,7 @@ eos_result_t eos_activity_controller_init(eos_activity_t *initial_activity)
     if (initial_activity->lifecycle && initial_activity->lifecycle->on_enter)
     {
         initial_activity->lifecycle->on_enter(initial_activity);
+        initial_activity->has_started = true;
     }
     _activity_show(initial_activity);
     g_activity_ctx.current_activity = initial_activity;
@@ -1037,7 +1039,7 @@ void eos_activity_enter(eos_activity_t *activity)
 
     if (activity == g_activity_ctx.watchface_activity)
     {
-        _activity_switch_to(activity);
+        _activity_switch_to(activity, false);
         return;
     }
 
@@ -1046,7 +1048,7 @@ void eos_activity_enter(eos_activity_t *activity)
         return;
     }
 
-    _activity_switch_to(activity);
+    _activity_switch_to(activity, false);
 }
 
 eos_result_t eos_activity_back(void)
@@ -1072,7 +1074,7 @@ eos_result_t eos_activity_back(void)
     {
         if (g_activity_ctx.watchface_activity && g_activity_ctx.current_activity != g_activity_ctx.watchface_activity)
         {
-            _activity_switch_to(g_activity_ctx.watchface_activity);
+            _activity_switch_to(g_activity_ctx.watchface_activity, true);
             return EOS_OK;
         }
         return EOS_FAILED;
@@ -1081,7 +1083,8 @@ eos_result_t eos_activity_back(void)
     eos_activity_t *current = eos_stack_pop(g_activity_ctx.activity_stack);
     EOS_CHECK_PTR_RETURN_VAL(current, EOS_FAILED);
 
-    current->destroy_on_exit = true;
+    eos_activity_t *cur_activity = g_activity_ctx.current_activity;
+    cur_activity->destroy_on_exit = true;
 
     eos_activity_t *prev = NULL;
     if (eos_stack_get_size(g_activity_ctx.activity_stack) == 0)
@@ -1095,7 +1098,7 @@ eos_result_t eos_activity_back(void)
 
     EOS_CHECK_PTR_RETURN_VAL(prev, EOS_FAILED);
 
-    _activity_switch_to(prev);
+    _activity_switch_to(prev, true);
 
     return EOS_OK;
 }
@@ -1133,16 +1136,13 @@ eos_result_t eos_activity_back_to_watchface(void)
             continue;
         }
 
-        if (activity == current)
-        {
-            activity->destroy_on_exit = true;
-            continue;
-        }
-
         _activity_run_destroy(activity);
     }
 
-    _activity_switch_to(watchface);
+    eos_activity_t *cur_activity = g_activity_ctx.current_activity;
+    cur_activity->destroy_on_exit = true;
+
+    _activity_switch_to(watchface, true);
     return EOS_OK;
 }
 

@@ -1118,26 +1118,24 @@ script_engine_result_t script_engine_request_stop(void)
         return SE_OK;
 
     case SCRIPT_STATE_RUNNING:
-        // Request stop and wait for state change
         _change_state(SCRIPT_STATE_STOPPING);
 
-        // Wait for the script to stop
         for (int timeout = 0; timeout < 100; timeout++)
         {
             if (engine_ctx.state != SCRIPT_STATE_STOPPING)
             {
                 break;
             }
+            lv_timer_handler();
+            eos_delay(1);
         }
 
-        // If still in STOPPING state, force cleanup
         if (engine_ctx.state == SCRIPT_STATE_STOPPING)
         {
             EOS_LOG_W("Force stopping script due to timeout");
             return _script_engine_stop_and_cleanup();
         }
 
-        // Normal stop flow
         if (engine_ctx.state == SCRIPT_STATE_STOPPED)
         {
             return SE_OK;
@@ -1152,6 +1150,8 @@ script_engine_result_t script_engine_request_stop(void)
             {
                 break;
             }
+            lv_timer_handler();
+            eos_delay(1);
         }
 
         if (engine_ctx.state == SCRIPT_STATE_STOPPING)
