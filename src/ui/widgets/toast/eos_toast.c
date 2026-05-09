@@ -11,7 +11,7 @@
 #define EOS_LOG_TAG "Toast"
 #include "eos_log.h"
 #include "eos_theme.h"
-#include "eos_img.h"
+#include "eos_image.h"
 #include "eos_config.h"
 #include "eos_anim.h"
 #include "eos_cqueue.h"
@@ -185,7 +185,7 @@ lv_obj_t *eos_toast_show(const char *icon_src, const char *message)
 
     // 创建 icon
     lv_obj_t *icon = lv_image_create(toast);
-    eos_img_set_src(icon, icon_src);
+    lv_image_set_src(icon, icon_src);
     eos_img_set_size(icon, _ICON_WIDTH, _ICON_HEIGHT);
 
     lv_obj_add_flag(icon, LV_OBJ_FLAG_EVENT_BUBBLE);

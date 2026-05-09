@@ -14,6 +14,7 @@
 #include "eos_mem.h"
 #include "eos_dfw.h"
 #include "cJSON.h"
+#include "eos_lvgl_fs.h"
 /* Macros and Definitions -------------------------------------*/
 #define _FILE_NAME_MAX_LENGTH 256
 /* Variables --------------------------------------------------*/
@@ -89,7 +90,7 @@ bool eos_storage_is_valid_filename(const char *name)
 
 cJSON *eos_storage_json_load(const char *path)
 {
-    char sanitized_path[PATH_MAX];
+    char sanitized_path[EOS_FS_PATH_MAX];
     if (!_storage_sanitize_path(path, sanitized_path, sizeof(sanitized_path))) {
         return NULL;
     }
@@ -113,7 +114,7 @@ eos_result_t eos_storage_json_save(const char *path, cJSON *root)
 {
     EOS_CHECK_PTR_RETURN_VAL(path && root, EOS_ERR_INVALID_ARG);
 
-    char sanitized_path[PATH_MAX];
+    char sanitized_path[EOS_FS_PATH_MAX];
     if (!_storage_sanitize_path(path, sanitized_path, sizeof(sanitized_path))) {
         return EOS_ERR_INVALID_ARG;
     }
@@ -131,7 +132,7 @@ eos_result_t eos_storage_json_save(const char *path, cJSON *root)
 
 bool eos_storage_json_get_bool(const char *path, const char *key, bool default_value)
 {
-    char sanitized_path[PATH_MAX];
+    char sanitized_path[EOS_FS_PATH_MAX];
     if (!_storage_sanitize_path(path, sanitized_path, sizeof(sanitized_path))) {
         return default_value;
     }
@@ -150,7 +151,7 @@ bool eos_storage_json_get_bool(const char *path, const char *key, bool default_v
 
 eos_result_t eos_storage_json_set_bool(const char *path, const char *key, bool value)
 {
-    char sanitized_path[PATH_MAX];
+    char sanitized_path[EOS_FS_PATH_MAX];
     if (!_storage_sanitize_path(path, sanitized_path, sizeof(sanitized_path))) {
         return EOS_ERR_INVALID_ARG;
     }
@@ -178,7 +179,7 @@ eos_result_t eos_storage_json_set_bool(const char *path, const char *key, bool v
 
 char *eos_storage_json_get_string(const char *path, const char *key, const char *default_value)
 {
-    char sanitized_path[PATH_MAX];
+    char sanitized_path[EOS_FS_PATH_MAX];
     if (!_storage_sanitize_path(path, sanitized_path, sizeof(sanitized_path))) {
         return eos_strdup(default_value);
     }
@@ -197,7 +198,7 @@ char *eos_storage_json_get_string(const char *path, const char *key, const char 
 
 eos_result_t eos_storage_json_set_string(const char *path, const char *key, const char *value)
 {
-    char sanitized_path[PATH_MAX];
+    char sanitized_path[EOS_FS_PATH_MAX];
     if (!_storage_sanitize_path(path, sanitized_path, sizeof(sanitized_path))) {
         return EOS_ERR_INVALID_ARG;
     }
@@ -225,7 +226,7 @@ eos_result_t eos_storage_json_set_string(const char *path, const char *key, cons
 
 double eos_storage_json_get_number(const char *path, const char *key, double default_value)
 {
-    char sanitized_path[PATH_MAX];
+    char sanitized_path[EOS_FS_PATH_MAX];
     if (!_storage_sanitize_path(path, sanitized_path, sizeof(sanitized_path))) {
         return default_value;
     }
@@ -244,7 +245,7 @@ double eos_storage_json_get_number(const char *path, const char *key, double def
 
 eos_result_t eos_storage_json_set_number(const char *path, const char *key, double value)
 {
-    char sanitized_path[PATH_MAX];
+    char sanitized_path[EOS_FS_PATH_MAX];
     if (!_storage_sanitize_path(path, sanitized_path, sizeof(sanitized_path))) {
         return EOS_ERR_INVALID_ARG;
     }
@@ -272,7 +273,7 @@ eos_result_t eos_storage_json_set_number(const char *path, const char *key, doub
 
 cJSON *eos_storage_json_get_json(const char *path, const char *key)
 {
-    char sanitized_path[PATH_MAX];
+    char sanitized_path[EOS_FS_PATH_MAX];
     if (!_storage_sanitize_path(path, sanitized_path, sizeof(sanitized_path))) {
         return NULL;
     }
@@ -296,7 +297,7 @@ cJSON *eos_storage_json_get_json(const char *path, const char *key)
 
 eos_result_t eos_storage_json_set_json(const char *path, const char *key, cJSON *json_value)
 {
-    char sanitized_path[PATH_MAX];
+    char sanitized_path[EOS_FS_PATH_MAX];
     if (!_storage_sanitize_path(path, sanitized_path, sizeof(sanitized_path))) {
         return EOS_ERR_INVALID_ARG;
     }
@@ -324,7 +325,7 @@ eos_result_t eos_storage_json_set_json(const char *path, const char *key, cJSON 
 
 eos_result_t eos_storage_json_create_if_not_exist(const char *path, const char *default_json)
 {
-    char sanitized_path[PATH_MAX];
+    char sanitized_path[EOS_FS_PATH_MAX];
     if (!_storage_sanitize_path(path, sanitized_path, sizeof(sanitized_path))) {
         return EOS_ERR_INVALID_ARG;
     }
@@ -339,7 +340,7 @@ eos_result_t eos_storage_json_create_if_not_exist(const char *path, const char *
 
 bool eos_storage_is_dir(const char *path)
 {
-    char sanitized_path[PATH_MAX];
+    char sanitized_path[EOS_FS_PATH_MAX];
     if (!_storage_sanitize_path(path, sanitized_path, sizeof(sanitized_path))) {
         return false;
     }
@@ -348,7 +349,7 @@ bool eos_storage_is_dir(const char *path)
 
 bool eos_storage_is_file(const char *path)
 {
-    char sanitized_path[PATH_MAX];
+    char sanitized_path[EOS_FS_PATH_MAX];
     if (!_storage_sanitize_path(path, sanitized_path, sizeof(sanitized_path))) {
         return false;
     }
@@ -366,7 +367,7 @@ eos_result_t eos_storage_puts(const char *s, eos_file_t fp)
 
 eos_result_t eos_storage_mkdir_if_not_exist(const char *path)
 {
-    char sanitized_path[PATH_MAX];
+    char sanitized_path[EOS_FS_PATH_MAX];
     if (!_storage_sanitize_path(path, sanitized_path, sizeof(sanitized_path))) {
         return EOS_ERR_INVALID_ARG;
     }
@@ -392,7 +393,7 @@ eos_result_t eos_storage_mkdir_if_not_exist(const char *path)
 
 eos_result_t eos_storage_create_file_if_not_exist(const char *path, const char *default_content)
 {
-    char sanitized_path[PATH_MAX];
+    char sanitized_path[EOS_FS_PATH_MAX];
     if (!_storage_sanitize_path(path, sanitized_path, sizeof(sanitized_path))) {
         return EOS_ERR_INVALID_ARG;
     }
@@ -436,7 +437,7 @@ eos_result_t eos_storage_create_file_if_not_exist(const char *path, const char *
 
 eos_result_t eos_storage_mkdir_recursive(const char *path)
 {
-    char sanitized_path[PATH_MAX];
+    char sanitized_path[EOS_FS_PATH_MAX];
     if (!_storage_sanitize_path(path, sanitized_path, sizeof(sanitized_path))) {
         return EOS_ERR_INVALID_ARG;
     }
@@ -542,7 +543,7 @@ eos_result_t eos_storage_write_file_immediate(const char *path, const void *data
         return EOS_ERR_INVALID_ARG;
     }
 
-    char sanitized_path[PATH_MAX];
+    char sanitized_path[EOS_FS_PATH_MAX];
     if (!_storage_sanitize_path(path, sanitized_path, sizeof(sanitized_path))) {
         return EOS_ERR_INVALID_ARG;
     }
@@ -560,7 +561,7 @@ eos_result_t eos_storage_write_file_immediate(const char *path, const void *data
 
 char *eos_storage_read_file_immediate(const char *path)
 {
-    char sanitized_path[PATH_MAX];
+    char sanitized_path[EOS_FS_PATH_MAX];
     if (!_storage_sanitize_path(path, sanitized_path, sizeof(sanitized_path))) {
         EOS_LOG_E("Invalid path");
         return NULL;
@@ -628,7 +629,7 @@ char *eos_storage_read_file(const char *path)
 
 eos_result_t eos_storage_rm_recursive(const char *path)
 {
-    char sanitized_path[PATH_MAX];
+    char sanitized_path[EOS_FS_PATH_MAX];
     if (!_storage_sanitize_path(path, sanitized_path, sizeof(sanitized_path))) {
         return EOS_ERR_INVALID_ARG;
     }
@@ -657,7 +658,7 @@ eos_result_t eos_storage_rm_recursive(const char *path)
         }
 
         char filename[_FILE_NAME_MAX_LENGTH];
-        char fullpath[PATH_MAX];
+        char fullpath[EOS_FS_PATH_MAX];
         eos_result_t result = EOS_OK;
 
         while (eos_storage_dir_read(dir, filename, sizeof(filename)) == 0)
@@ -699,7 +700,7 @@ eos_result_t eos_storage_rm_recursive(const char *path)
 
 eos_file_t eos_storage_file_open_read(const char *path)
 {
-    char sanitized_path[PATH_MAX];
+    char sanitized_path[EOS_FS_PATH_MAX];
     if (!_storage_sanitize_path(path, sanitized_path, sizeof(sanitized_path))) {
         EOS_LOG_E("Invalid path: %s", path);
         return EOS_FILE_INVALID;
@@ -710,7 +711,7 @@ eos_file_t eos_storage_file_open_read(const char *path)
 
 eos_file_t eos_storage_file_open_write(const char *path)
 {
-    char sanitized_path[PATH_MAX];
+    char sanitized_path[EOS_FS_PATH_MAX];
     if (!_storage_sanitize_path(path, sanitized_path, sizeof(sanitized_path))) {
         EOS_LOG_E("Invalid path: %s", path);
         return EOS_FILE_INVALID;
@@ -764,9 +765,19 @@ int eos_storage_file_size(eos_file_t fp, uint32_t *size)
     return eos_fs_size(fp, size);
 }
 
+int eos_storage_file_tell(eos_file_t fp, uint32_t *pos)
+{
+    if (fp == EOS_FILE_INVALID || !pos) {
+        EOS_LOG_E("Invalid parameters");
+        return -1;
+    }
+
+    return eos_fs_tell(fp, pos);
+}
+
 int eos_storage_file_remove(const char *path)
 {
-    char sanitized_path[PATH_MAX];
+    char sanitized_path[EOS_FS_PATH_MAX];
     if (!_storage_sanitize_path(path, sanitized_path, sizeof(sanitized_path))) {
         EOS_LOG_E("Invalid path: %s", path);
         return -1;
@@ -777,7 +788,7 @@ int eos_storage_file_remove(const char *path)
 
 eos_dir_t eos_storage_dir_open(const char *path)
 {
-    char sanitized_path[PATH_MAX];
+    char sanitized_path[EOS_FS_PATH_MAX];
     if (!_storage_sanitize_path(path, sanitized_path, sizeof(sanitized_path))) {
         EOS_LOG_E("Invalid path: %s", path);
         return NULL;
@@ -799,4 +810,13 @@ int eos_storage_dir_read(eos_dir_t dir, char *name_buf, size_t buf_size)
 void eos_storage_dir_close(eos_dir_t dir)
 {
     eos_fs_closedir(dir);
+}
+
+void eos_service_storage_init(void)
+{
+    eos_lvgl_fs_register();
+#if EOS_DFW_ENABLE
+    eos_dfw_init();
+#endif /* EOS_DFW_ENABLE */
+    EOS_LOG_I("Storage service initialized");
 }

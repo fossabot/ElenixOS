@@ -15,7 +15,7 @@
 // #define EOS_LOG_DISABLE
 #define EOS_LOG_TAG "BasicWidgets"
 #include "eos_log.h"
-#include "eos_img.h"
+#include "eos_image.h"
 #include "eos_event.h"
 #include "script_engine_core.h"
 #include "eos_theme.h"
@@ -817,7 +817,7 @@ lv_obj_t *eos_list_add_button(lv_obj_t *list, const void *icon, const char *txt)
     if (icon)
     {
         img = lv_image_create(obj);
-        eos_img_set_src(img, icon);
+        lv_image_set_src(img, icon);
         eos_img_set_size(img, 64, 64);
     }
 
@@ -1180,7 +1180,7 @@ lv_obj_t *eos_row_create(lv_obj_t *parent,
     if (left_img_path)
     {
         lv_obj_t *icon = lv_image_create(row);
-        eos_img_set_src(icon, left_img_path);
+        lv_image_set_src(icon, left_img_path);
         eos_img_set_size(icon, icon_w, icon_h);
     }
 

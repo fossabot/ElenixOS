@@ -13,7 +13,7 @@
 #include "eos_log.h"
 #include "lvgl.h"
 #include "cJSON.h"
-#include "eos_img.h"
+#include "eos_image.h"
 #include "eos_msg_list.h"
 #include "eos_lang.h"
 #include "eos_basic_widgets.h"
@@ -434,7 +434,7 @@ static void _clear_data_btn_cb(lv_event_t *e)
     lv_obj_t *btn = lv_event_get_target(e);
     const char *app_id = (const char *)lv_event_get_user_data(e);
     EOS_CHECK_PTR_RETURN(app_id);
-    char data_path[PATH_MAX];
+    char data_path[EOS_FS_PATH_MAX];
     snprintf(data_path, sizeof(data_path), EOS_APP_DATA_DIR "%s", app_id);
     if (eos_storage_rm_recursive(data_path) != EOS_OK)
     {
@@ -458,7 +458,7 @@ static void _settings_app_list_btn_cb(lv_event_t *e)
     EOS_CHECK_PTR_RETURN(app_id);
 
     // Get app manifest
-    char manifest_path[PATH_MAX];
+    char manifest_path[EOS_FS_PATH_MAX];
     snprintf(manifest_path, sizeof(manifest_path), EOS_APP_INSTALLED_DIR "%s/" EOS_APP_MANIFEST_FILE_NAME,
              app_id);
     script_pkg_t pkg = {0};
@@ -472,7 +472,7 @@ static void _settings_app_list_btn_cb(lv_event_t *e)
               "author:%s | description:%s",
               pkg.id, pkg.name, pkg.version,
               pkg.version, pkg.description);
-    char script_path[PATH_MAX];
+    char script_path[EOS_FS_PATH_MAX];
     snprintf(script_path, sizeof(script_path), EOS_APP_INSTALLED_DIR "%s/" EOS_APP_SCRIPT_ENTRY_FILE_NAME,
              app_id);
     if (!eos_storage_is_file(script_path))
@@ -500,7 +500,7 @@ static void _settings_app_list_btn_cb(lv_event_t *e)
                           LV_FLEX_ALIGN_START,
                           LV_FLEX_ALIGN_CENTER);
 
-    char icon_path[PATH_MAX];
+    char icon_path[EOS_FS_PATH_MAX];
     snprintf(icon_path, sizeof(icon_path), EOS_APP_INSTALLED_DIR "%s/" EOS_APP_ICON_FILE_NAME,
              app_id);
     if (!eos_storage_is_file(icon_path))
@@ -536,7 +536,7 @@ static void _settings_app_list_btn_cb(lv_event_t *e)
 
     eos_list_add_placeholder(list, 20);
 
-    char data_path[PATH_MAX];
+    char data_path[EOS_FS_PATH_MAX];
     snprintf(data_path, sizeof(data_path), EOS_APP_DATA_DIR "%s", app_id);
     if (!eos_storage_is_dir(data_path))
     {
@@ -558,7 +558,7 @@ static void _settings_app_list_btn_cb(lv_event_t *e)
 
 static void _app_btn_create(lv_obj_t *parent, const char *app_id)
 {
-    char icon_path[PATH_MAX];
+    char icon_path[EOS_FS_PATH_MAX];
     snprintf(icon_path, sizeof(icon_path), EOS_APP_INSTALLED_DIR "%s/" EOS_APP_ICON_FILE_NAME,
              app_id);
     if (!eos_storage_is_file(icon_path))
@@ -568,7 +568,7 @@ static void _app_btn_create(lv_obj_t *parent, const char *app_id)
     EOS_LOG_D("Icon: %s", icon_path);
 
     // Get app manifest
-    char manifest_path[PATH_MAX];
+    char manifest_path[EOS_FS_PATH_MAX];
     snprintf(manifest_path, sizeof(manifest_path), EOS_APP_INSTALLED_DIR "%s/" EOS_APP_MANIFEST_FILE_NAME,
              app_id);
     script_pkg_t pkg = {0};
@@ -708,7 +708,7 @@ static void _settings_view_device_info(lv_event_t *e)
 
     eos_list_add_placeholder(list, 20);
     lv_obj_t *logo = lv_image_create(list);
-    eos_img_set_src(logo, EOS_IMG_LOGO);
+    lv_image_set_src(logo, EOS_IMG_LOGO);
     eos_list_add_placeholder(list, 30);
 
     char *device_name = eos_config_get_string(

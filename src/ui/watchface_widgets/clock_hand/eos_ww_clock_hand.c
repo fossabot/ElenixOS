@@ -8,7 +8,7 @@
 /* Includes ---------------------------------------------------*/
 #include <stdio.h>
 #include <stdlib.h>
-#include "eos_img.h"
+#include "eos_image.h"
 #include "eos_service_time.h"
 #include "eos_log.h"
 /* Macros and Definitions -------------------------------------*/
@@ -112,7 +112,7 @@ lv_obj_t *eos_clock_hand_create(lv_obj_t *parent,
 
     lv_obj_t *hand = lv_image_create(parent);
 
-    eos_img_set_src(hand, src);
+    lv_image_set_src(hand, src);
 
     lv_image_set_pivot(hand, hand_pivot_x, hand_pivot_y);
 

@@ -14,7 +14,7 @@
 #include "eos_core.h"
 #include "eos_port.h"
 #include "eos_lang.h"
-#include "eos_img.h"
+#include "eos_image.h"
 #include "eos_theme.h"
 #include "eos_font.h"
 #include "eos_basic_widgets.h"

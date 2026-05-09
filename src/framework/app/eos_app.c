@@ -348,7 +348,7 @@ eos_result_t _eos_app_list_get_installed(void)
         }
 
         // Build full path
-        char full_path[PATH_MAX];
+        char full_path[EOS_FS_PATH_MAX];
         snprintf(full_path, sizeof(full_path),
                  EOS_APP_INSTALLED_DIR "%s", name_buf);
 
@@ -408,9 +408,9 @@ eos_result_t eos_app_install(const char *eapk_path)
         return EOS_FAILED;
     }
     // Concatenate path
-    char path[PATH_MAX];
+    char path[EOS_FS_PATH_MAX];
     snprintf(path, sizeof(path), EOS_APP_INSTALLED_DIR "%s", header.pkg_id);
-    char data_path[PATH_MAX];
+    char data_path[EOS_FS_PATH_MAX];
     snprintf(data_path, sizeof(data_path), EOS_APP_DATA_DIR "%s", header.pkg_id);
     EOS_LOG_D("APP_PATH: %s", path);
     // Check if app exists
@@ -452,9 +452,9 @@ eos_result_t eos_app_uninstall(const char *app_id)
 {
     EOS_LOG_D("Uninstall: %s", app_id);
 
-    char path[PATH_MAX];
+    char path[EOS_FS_PATH_MAX];
     snprintf(path, sizeof(path), EOS_APP_INSTALLED_DIR "%s", app_id);
-    char data_path[PATH_MAX];
+    char data_path[EOS_FS_PATH_MAX];
     snprintf(data_path, sizeof(data_path), EOS_APP_DATA_DIR "%s", app_id);
 
     if (!eos_storage_is_dir(path))

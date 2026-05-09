@@ -1153,7 +1153,7 @@ script_engine_result_t script_engine_reload_current_script(void)
         return -SE_ERR_INVALID_STATE;
     }
 
-    char manifest_path[PATH_MAX];
+    char manifest_path[EOS_FS_PATH_MAX];
     snprintf(manifest_path, sizeof(manifest_path), "%s%s", base_path, manifest_file_name);
     if (script_engine_get_manifest(manifest_path, &pkg) != SE_OK)
     {
@@ -1162,7 +1162,7 @@ script_engine_result_t script_engine_reload_current_script(void)
         return -SE_FAILED;
     }
 
-    char script_path[PATH_MAX];
+    char script_path[EOS_FS_PATH_MAX];
     snprintf(script_path, sizeof(script_path), "%s%s", base_path, entry_file_name);
     pkg.base_path = base_path;
 

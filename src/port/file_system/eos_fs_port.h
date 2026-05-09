@@ -109,6 +109,13 @@ int eos_fs_seek(eos_file_t file, uint32_t pos);
  */
 int eos_fs_size(eos_file_t file, uint32_t *size);
 /**
+ * @brief Get current file position
+ * @param file File handle
+ * @param pos Output current file position
+ * @return int Returns 0 on success, -1 on failure
+ */
+int eos_fs_tell(eos_file_t file, uint32_t *pos);
+/**
  * @brief Close file
  * @param file File handle
  */

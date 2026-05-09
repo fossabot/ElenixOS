@@ -14,7 +14,7 @@
 #include <time.h>
 #include <sys/time.h>
 #include "lvgl.h"
-#include "eos_img.h"
+#include "eos_image.h"
 #include "eos_msg_list.h"
 #include "eos_lang.h"
 #include "eos_basic_widgets.h"
@@ -51,6 +51,7 @@
 #include "eos_icon.h"
 #include "eos_activity.h"
 #include "eos_std_widgets.h"
+#include "eos_service_storage.h"
 #define EOS_LOG_TAG "Core"
 #include "eos_log.h"
 /* Macros and Definitions -------------------------------------*/
@@ -140,7 +141,7 @@ void eos_logo_play(bool anim)
 
     // Create LOGO image object
     lv_obj_t *logo_img = lv_image_create(logo_container);
-    eos_img_set_src(logo_img, EOS_IMG_LOGO);
+    lv_image_set_src(logo_img, EOS_IMG_LOGO);
     lv_obj_center(logo_img);
 
     lv_timer_handler();
@@ -154,9 +155,7 @@ void eos_init(void)
     eos_logo_play(true);
     _print_boot_info();
     /************************** System components initialization **************************/
-#if EOS_DFW_ENABLE
-    eos_dfw_init();
-#endif /* EOS_DFW_ENABLE */
+    eos_service_storage_init();
     eos_lang_init();
     eos_dispatcher_init();
     eos_toast_init();

@@ -15,7 +15,7 @@
 #include <string.h>
 #include "eos_swipe_panel.h"
 #include "lvgl.h"
-#include "eos_img.h"
+#include "eos_image.h"
 #include "eos_msg_list.h"
 #include "eos_lang.h"
 #define EOS_LOG_TAG "Test"
@@ -332,7 +332,7 @@ static script_engine_result_t _test_app_debug_create_pkg(const char *app_id, scr
     if (!(app_id && out_pkg))
         return -SE_ERR_NULL_PACKAGE;
 
-    char manifest_path[PATH_MAX];
+    char manifest_path[EOS_FS_PATH_MAX];
     snprintf(manifest_path, sizeof(manifest_path), EOS_APP_INSTALLED_DIR "%s/" EOS_APP_MANIFEST_FILE_NAME,
              app_id);
 
@@ -348,11 +348,11 @@ static script_engine_result_t _test_app_debug_create_pkg(const char *app_id, scr
         return -SE_FAILED;
     }
 
-    char script_path[PATH_MAX];
+    char script_path[EOS_FS_PATH_MAX];
     snprintf(script_path, sizeof(script_path), EOS_APP_INSTALLED_DIR "%s/" EOS_APP_SCRIPT_ENTRY_FILE_NAME,
              app_id);
 
-    char base_path[PATH_MAX];
+    char base_path[EOS_FS_PATH_MAX];
     snprintf(base_path, sizeof(base_path), EOS_APP_INSTALLED_DIR "%s/", app_id);
     pkg->base_path = eos_strdup(base_path);
 
@@ -644,7 +644,7 @@ static void _test_app_debug_app_btn_cb(lv_event_t *e)
 
 static void _test_app_debug_app_btn_create(lv_obj_t *parent, const char *app_id)
 {
-    char icon_path[PATH_MAX];
+    char icon_path[EOS_FS_PATH_MAX];
     snprintf(icon_path, sizeof(icon_path), EOS_APP_INSTALLED_DIR "%s/" EOS_APP_ICON_FILE_NAME,
              app_id);
     if (!eos_storage_is_file(icon_path))
@@ -652,7 +652,7 @@ static void _test_app_debug_app_btn_create(lv_obj_t *parent, const char *app_id)
         memcpy(icon_path, EOS_IMG_APP, sizeof(EOS_IMG_APP));
     }
 
-    char manifest_path[PATH_MAX];
+    char manifest_path[EOS_FS_PATH_MAX];
     snprintf(manifest_path, sizeof(manifest_path), EOS_APP_INSTALLED_DIR "%s/" EOS_APP_MANIFEST_FILE_NAME,
              app_id);
 
@@ -1023,7 +1023,7 @@ static void _test_image_input_cb(lv_event_t *e)
         if (strlen(path) > 0)
         {
             // Set image source
-            eos_img_set_src(img, path);
+            lv_image_set_src(img, path);
 
             // Clear text box content
             lv_textarea_set_text(ta, "");

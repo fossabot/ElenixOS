@@ -11,7 +11,7 @@
 #include <string.h>
 #include "cJSON.h"
 #include "eos_storage_paths.h"
-#include "eos_img.h"
+#include "eos_image.h"
 #include "eos_msg_list.h"
 #include "eos_lang.h"
 #define EOS_LOG_TAG "ConfigService"

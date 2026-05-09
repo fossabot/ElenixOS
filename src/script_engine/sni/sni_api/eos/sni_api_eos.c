@@ -64,7 +64,7 @@ static bool sni_api_eos_to_c_string(jerry_value_t js_val, char **out_str)
 static char *sni_api_eos_get_assets_file_str(jerry_value_t js_val)
 {
     char *src = NULL;
-    char path[PATH_MAX];
+    char path[EOS_FS_PATH_MAX];
     char *ret = NULL;
     const char *script_id = NULL;
 
@@ -114,7 +114,7 @@ static char *sni_api_eos_get_assets_file_str(jerry_value_t js_val)
 static bool sni_api_eos_config_write_to_file(cJSON *root)
 {
     char *json_str = NULL;
-    char config_file_path[PATH_MAX];
+    char config_file_path[EOS_FS_PATH_MAX];
     bool ret;
 
     if (!root)
@@ -163,7 +163,7 @@ static bool sni_api_eos_config_write_to_file(cJSON *root)
 
 static cJSON *sni_api_eos_config_load_from_file(void)
 {
-    char config_file_path[PATH_MAX];
+    char config_file_path[EOS_FS_PATH_MAX];
     char *data = NULL;
     cJSON *root = NULL;
 

@@ -16,7 +16,7 @@
 #include "eos_watchface.h"
 #include "eos_basic_widgets.h"
 #include "eos_pkg_mgr.h"
-#include "eos_img.h"
+#include "eos_image.h"
 #include "eos_port.h"
 #include "eos_anim.h"
 #include "script_engine_core.h"
@@ -90,7 +90,7 @@ void eos_watchface_list_enter(void)
                               LV_FLEX_ALIGN_CENTER,  // Cross axis (vertical) center
                               LV_FLEX_ALIGN_CENTER); // Content center
 
-        char icon_path[PATH_MAX];
+        char icon_path[EOS_FS_PATH_MAX];
         if (watchface_id && strcmp(watchface_id, EOS_WATCHFACE_BUILTIN_FALLBACK_ID) == 0)
         {
             memcpy(icon_path, EOS_IMG_WATCHFACE, sizeof(EOS_IMG_WATCHFACE));
@@ -148,7 +148,7 @@ void eos_watchface_list_enter(void)
         /* Remove CLICKABLE flag to let touch events pass to parent object */
         lv_obj_remove_flag(watchface_snapshot, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_remove_flag(watchface_snapshot, LV_OBJ_FLAG_CLICK_FOCUSABLE);
-        eos_img_set_src(watchface_snapshot, icon_path);
+        lv_image_set_src(watchface_snapshot, icon_path);
         eos_img_set_size(watchface_snapshot,
                  _SNAPSHOT_CONTAINER_W - (_SNAPSHOT_CONTAINER_PAD * 2),
                  _SNAPSHOT_CONTAINER_H - (_SNAPSHOT_CONTAINER_PAD * 2));
@@ -167,7 +167,7 @@ void eos_watchface_list_enter(void)
         }
         else
         {
-            char manifest_path[PATH_MAX];
+            char manifest_path[EOS_FS_PATH_MAX];
             snprintf(manifest_path, sizeof(manifest_path), EOS_WATCHFACE_INSTALLED_DIR "%s/" EOS_WATCHFACE_MANIFEST_FILE_NAME,
                      watchface_id);
             script_pkg_t pkg = {0};

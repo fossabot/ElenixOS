@@ -14,7 +14,7 @@
 #define EOS_LOG_DISABLE
 #define EOS_LOG_TAG "MessageList"
 #include "eos_log.h"
-#include "eos_img.h"
+#include "eos_image.h"
 #include "eos_config.h"
 #include "eos_theme.h"
 #include "eos_slide_widget.h"
@@ -178,7 +178,7 @@ static void _msg_list_item_clicked_cb(lv_event_t *e)
         lv_obj_t *icon = lv_image_create(detail_container);
         lv_obj_set_size(icon, _ICON_LARGE_WIDTH, _ICON_LARGE_HEIGHT);
         lv_obj_set_style_border_width(icon, 0, 0);
-        eos_img_set_src(icon, lv_image_get_src(original_icon));
+        lv_image_set_src(icon, lv_image_get_src(original_icon));
         eos_img_set_size(icon, _ICON_LARGE_WIDTH, _ICON_LARGE_HEIGHT);
         lv_obj_remove_flag(icon, LV_OBJ_FLAG_SCROLLABLE);
     }
@@ -281,7 +281,7 @@ eos_msg_list_item_t *eos_msg_list_item_create(eos_msg_list_t *list)
     lv_obj_set_style_border_width(item->icon, 0, 0);
     lv_obj_set_style_margin_all(item->icon, 0, 0);
     lv_obj_remove_flag(item->icon, LV_OBJ_FLAG_SCROLLABLE);
-    eos_img_set_src(item->icon, EOS_IMG_APP);
+    lv_image_set_src(item->icon, EOS_IMG_APP);
     eos_img_set_size(item->icon, _ICON_WIDTH, _ICON_HEIGHT);
 
     // 标题
@@ -395,7 +395,7 @@ void eos_msg_list_item_set_time(eos_msg_list_item_t *item, const char *time)
 void eos_msg_list_item_icon_set_src(eos_msg_list_item_t *item, const char *src)
 {
     EOS_CHECK_PTR_RETURN(item && src);
-    eos_img_set_src(item->icon, src);
+    lv_image_set_src(item->icon, src);
     eos_img_set_size(item->icon, _ICON_WIDTH, _ICON_HEIGHT);
 }
 

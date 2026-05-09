@@ -9,7 +9,7 @@
 #include <stdlib.h>
 #include <limits.h>
 #include <string.h>
-#include "eos_img.h"
+#include "eos_image.h"
 #include "eos_mem.h"
 #include "eos_port.h"
 #include "lvgl.h"
@@ -191,8 +191,8 @@ static bool sni_image_normalize_absolute_path(const char *input, char *output, s
 
 static char *sni_image_resolve_under_root(const char *root_dir, const char *candidate)
 {
-    char root_real[PATH_MAX];
-    char candidate_real[PATH_MAX];
+    char root_real[EOS_FS_PATH_MAX];
+    char candidate_real[EOS_FS_PATH_MAX];
 
     if (!root_dir || !candidate)
     {
@@ -221,8 +221,8 @@ static char *sni_image_resolve_under_root(const char *root_dir, const char *cand
 
 static char *sni_image_resolve_asset_path(const char *src)
 {
-    char root_dir[PATH_MAX];
-    char candidate[PATH_MAX];
+    char root_dir[EOS_FS_PATH_MAX];
+    char candidate[EOS_FS_PATH_MAX];
 
     if (!src || src[0] == '\0')
     {
@@ -479,7 +479,7 @@ jerry_value_t sni_api_lv_image_set_src(const jerry_call_info_t *call_info_p,
         resolved_path = sni_image_resolve_asset_path(raw_src);
         if (resolved_path)
         {
-            eos_img_set_src(self_obj, resolved_path);
+            lv_image_set_src(self_obj, resolved_path);
             eos_free(resolved_path);
         }
         else

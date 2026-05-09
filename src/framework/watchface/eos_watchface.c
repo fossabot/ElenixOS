@@ -140,7 +140,7 @@ eos_result_t _eos_watchface_list_get_installed()
         }
 
         // Build full path
-        char full_path[PATH_MAX];
+        char full_path[EOS_FS_PATH_MAX];
         snprintf(full_path, sizeof(full_path), EOS_WATCHFACE_INSTALLED_DIR "%s", name_buf);
 
         // Check if it is a directory
@@ -190,9 +190,9 @@ eos_result_t eos_watchface_install(const char *eapk_path)
         return EOS_FAILED;
     }
     // Construct path
-    char path[PATH_MAX];
+    char path[EOS_FS_PATH_MAX];
     snprintf(path, sizeof(path), EOS_WATCHFACE_INSTALLED_DIR "%s", header.pkg_id);
-    char data_path[PATH_MAX];
+    char data_path[EOS_FS_PATH_MAX];
     snprintf(data_path, sizeof(data_path), EOS_WATCHFACE_DATA_DIR "%s", header.pkg_id);
     EOS_LOG_D("WATCHFACE_PATH: %s", path);
     // Check if application exists
@@ -234,9 +234,9 @@ eos_result_t eos_watchface_uninstall(const char *watchface_id)
     }
 
     // Uninstall application
-    char path[PATH_MAX];
+    char path[EOS_FS_PATH_MAX];
     snprintf(path, sizeof(path), EOS_WATCHFACE_INSTALLED_DIR "%s", watchface_id);
-    char data_path[PATH_MAX];
+    char data_path[EOS_FS_PATH_MAX];
     snprintf(data_path, sizeof(data_path), EOS_WATCHFACE_DATA_DIR "%s", watchface_id);
     if (!eos_storage_is_dir(path))
     {
@@ -361,7 +361,7 @@ void eos_watchface_on_enter(eos_activity_t *a)
     }
 
     // Get watchface related info directly through watchface ID and store to script_package
-    char manifest_path[PATH_MAX];
+    char manifest_path[EOS_FS_PATH_MAX];
     snprintf(manifest_path, sizeof(manifest_path),
              EOS_WATCHFACE_INSTALLED_DIR "%s/" EOS_WATCHFACE_MANIFEST_FILE_NAME,
              wf_id);
@@ -372,13 +372,13 @@ void eos_watchface_on_enter(eos_activity_t *a)
         EOS_LOG_E("Read manifest failed: %s", manifest_path);
         return;
     }
-    char script_path[PATH_MAX];
+    char script_path[EOS_FS_PATH_MAX];
     snprintf(script_path, sizeof(script_path),
              EOS_WATCHFACE_INSTALLED_DIR "%s/" EOS_WATCHFACE_SCRIPT_ENTRY_FILE_NAME,
              wf_id);
 
     // Set script base path for resolving relative path module imports
-    char base_path[PATH_MAX];
+    char base_path[EOS_FS_PATH_MAX];
     snprintf(base_path, sizeof(base_path), EOS_WATCHFACE_INSTALLED_DIR "%s/", wf_id);
     pkg.base_path = eos_strdup(base_path);
     if (!eos_storage_is_file(script_path))

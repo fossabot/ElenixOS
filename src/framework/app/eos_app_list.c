@@ -17,7 +17,7 @@
 #include "eos_app.h"
 #include "eos_basic_widgets.h"
 #include "eos_pkg_mgr.h"
-#include "eos_img.h"
+#include "eos_image.h"
 #include "eos_port.h"
 #include "eos_anim.h"
 #include "script_engine_core.h"
@@ -210,7 +210,7 @@ static script_engine_result_t _app_list_build_script_pkg(const char *app_id, scr
         return -SE_ERR_NULL_PACKAGE;
     }
 
-    char manifest_path[PATH_MAX];
+    char manifest_path[EOS_FS_PATH_MAX];
     snprintf(manifest_path, sizeof(manifest_path), EOS_APP_INSTALLED_DIR "%s/" EOS_APP_MANIFEST_FILE_NAME,
              app_id);
 
@@ -221,11 +221,11 @@ static script_engine_result_t _app_list_build_script_pkg(const char *app_id, scr
         return -SE_FAILED;
     }
 
-    char script_path[PATH_MAX];
+    char script_path[EOS_FS_PATH_MAX];
     snprintf(script_path, sizeof(script_path), EOS_APP_INSTALLED_DIR "%s/" EOS_APP_SCRIPT_ENTRY_FILE_NAME,
              app_id);
 
-    char base_path[PATH_MAX];
+    char base_path[EOS_FS_PATH_MAX];
     snprintf(base_path, sizeof(base_path), EOS_APP_INSTALLED_DIR "%s/", app_id);
     pkg->base_path = eos_strdup(base_path);
     if (!pkg->base_path)
@@ -828,7 +828,7 @@ static void _app_list_refresh(lv_obj_t *bubble_grid)
                     continue;
                 }
 
-                char icon_path[PATH_MAX];
+                char icon_path[EOS_FS_PATH_MAX];
                 snprintf(icon_path, sizeof(icon_path), EOS_APP_INSTALLED_DIR "%s/" EOS_APP_ICON_FILE_NAME,
                          app_id);
                 if (!eos_storage_is_file(icon_path))
@@ -869,7 +869,7 @@ static void _app_list_refresh(lv_obj_t *bubble_grid)
                 continue;
 
             // Non-system app
-            char icon_path[PATH_MAX];
+            char icon_path[EOS_FS_PATH_MAX];
             snprintf(icon_path, sizeof(icon_path), EOS_APP_INSTALLED_DIR "%s/" EOS_APP_ICON_FILE_NAME,
                      app_id);
             if (!eos_storage_is_file(icon_path))

@@ -264,6 +264,14 @@ ssize_t eos_storage_file_write(eos_file_t fp, const void *buf, size_t size);
 int eos_storage_file_size(eos_file_t fp, uint32_t *size);
 
 /**
+ * @brief Get current file position
+ * @param fp File handle
+ * @param pos Output pointer for current position
+ * @return 0 on success, negative error code on failure
+ */
+int eos_storage_file_tell(eos_file_t fp, uint32_t *pos);
+
+/**
  * @brief Remove file with path validation
  * @param path File path
  * @return 0 on success, negative error code on failure
@@ -291,6 +299,11 @@ int eos_storage_dir_read(eos_dir_t dir, char *name_buf, size_t buf_size);
  * @param dir Directory handle
  */
 void eos_storage_dir_close(eos_dir_t dir);
+
+/**
+ * @brief Initialize storage service
+ */
+void eos_service_storage_init(void);
 
 #ifdef __cplusplus
 }

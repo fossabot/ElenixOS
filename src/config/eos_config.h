@@ -166,8 +166,7 @@ extern "C"
     #define EOS_FONT_TTF_DATA_NAME SourceHanSansSC_12M
     #define EOS_FONT_TTF_DATA_SIZE SourceHanSansSC_12M_size
 #elif EOS_FONT_TTF_TYPE == EOS_FONT_TTF_FILE
-    #define LV_FS_STDIO_LETTER_STR "A"
-    #define EOS_FONT_TTF_FILE_PATH LV_FS_STDIO_LETTER_STR ":" EOS_SYS_RES_FONT_DIR "MiSans-Normal.ttf"
+    #define EOS_FONT_TTF_FILE_PATH EOS_SYS_RES_FONT_DIR "MiSans-Normal.ttf"
 #endif /* EOS_FONT_TTF_TYPE */
 
 /**
@@ -217,6 +216,13 @@ extern "C"
     #define EOS_FILE_INVALID NULL           /**< Invalid file */
     #define EOS_DIR_INVALID NULL            /**< Invalid directory */
 #endif /* EOS_FS_TYPE */
+
+#define EOS_FS_PATH_MAX 256 /**< Maximum file path length, including null terminator */
+
+/**
+ * The drive letter used by LVGL to access the file system, for example: "S:/path/to/file"
+ */
+#define EOS_LVGL_FS_LETTER 'Z'
 
 #define EOS_DFW_ENABLE 0        /**< Whether to enable delayed file writer */
 

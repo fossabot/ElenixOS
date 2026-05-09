@@ -23,7 +23,7 @@
 #include "eos_control_center.h"
 #include "eos_msg_list.h"
 #include "eos_event.h"
-#include "eos_img.h"
+#include "eos_image.h"
 /* Macros and Definitions -------------------------------------*/
 #define _ACTIVITY_STACK_INIT_CAPACITY 8
 #define _DEFAULT_TITLE_COLOR EOS_COLOR_BLUE
