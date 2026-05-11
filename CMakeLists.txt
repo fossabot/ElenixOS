@@ -61,6 +61,11 @@ set(JERRY_LIBFUZZER OFF CACHE BOOL "Build jerry with libfuzzer support?" FORCE)
 set(UNITTESTS OFF CACHE BOOL "Build unit tests?" FORCE)
 set(DOCTESTS OFF CACHE BOOL "Build doc tests?" FORCE)
 set(ENABLE_AMALGAM OFF CACHE BOOL "Enable amalgamated build?" FORCE)
+
+if(EOS_IS_WASM)
+    add_compile_options(-Wno-enum-enum-conversion -Wno-unterminated-string-initialization)
+endif()
+
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/third_party/jerryscript)
 target_link_libraries(elenixos_lib PRIVATE jerry-core jerry-ext jerry-port)
 

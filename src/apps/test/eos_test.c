@@ -826,7 +826,7 @@ static void _test_msg_list_cb(lv_event_t *e)
     eos_msg_list_item_set_time(item1, "21:00");
 }
 
-static void _test_msg_list()
+static void _test_msg_list(lv_event_t *e)
 {
     _create_new_scr();
     eos_msg_list_t *msg_list = eos_msg_list_get_instance();
@@ -901,7 +901,7 @@ static void _test_nav_cb_1(lv_event_t *e)
     eos_activity_enter(activity);
 }
 
-static void _test_font()
+static void _test_font(lv_event_t *e)
 {
     _create_new_scr();
 
@@ -975,7 +975,7 @@ static void _test_vkb_event_cb(lv_event_t *e)
     }
 }
 
-static void _test_vkb()
+static void _test_vkb(lv_event_t *e)
 {
     _create_new_scr();
     lv_obj_t *pinyin_ime = lv_ime_pinyin_create(eos_view_active());
@@ -1036,7 +1036,7 @@ static void _test_image_input_cb(lv_event_t *e)
     }
 }
 
-static void _test_image()
+static void _test_image(lv_event_t *e)
 {
     lv_obj_t *scr = _create_new_scr();
     // 创建图片对象但不设置源
@@ -1060,17 +1060,17 @@ static void _test_image()
     lv_obj_add_event_cb(ta, _test_image_input_cb, LV_EVENT_ALL, kb);
 }
 
-static void _test_app_list()
+static void _test_app_list(lv_event_t *e)
 {
     eos_app_list_enter();
 }
 
-static void _test_app_debug_page()
+static void _test_app_debug_page(lv_event_t *e)
 {
     _test_app_debugger();
 }
 
-static void _test_watchface_list()
+static void _test_watchface_list(lv_event_t *e)
 {
     eos_watchface_list_enter();
 }
@@ -1080,13 +1080,13 @@ static void _toast_clicked_cb(lv_event_t *e)
     eos_app_list_enter();
 }
 
-static void _test_toast()
+static void _test_toast(lv_event_t *e)
 {
     lv_obj_t *toast = eos_toast_show(NULL, "Click me to open App List!");
     lv_obj_add_event_cb(toast, _toast_clicked_cb, LV_EVENT_CLICKED, NULL);
 }
 
-static void _test_panel_basic()
+static void _test_panel_basic(lv_event_t *e)
 {
     lv_obj_t *view = _create_new_scr();
     if (!view) {
@@ -1117,7 +1117,7 @@ static void _test_panel_basic()
     }
 }
 
-static void _test_panel_with_extra_slot()
+static void _test_panel_with_extra_slot(lv_event_t *e)
 {
     lv_obj_t *view = _create_new_scr();
     if (!view) {
@@ -1157,7 +1157,7 @@ static void _test_panel_with_extra_slot()
     }
 }
 
-static void _test_fault_panel_bug()
+static void _test_fault_panel_bug(lv_event_t *e)
 {
     lv_obj_t *view = _create_new_scr();
     if (!view) {
@@ -1187,7 +1187,7 @@ static void _test_fault_panel_bug()
     }
 }
 
-static void _test_fault_panel_warning()
+static void _test_fault_panel_warning(lv_event_t *e)
 {
     lv_obj_t *view = _create_new_scr();
     if (!view) {
@@ -1217,7 +1217,7 @@ static void _test_fault_panel_warning()
     }
 }
 
-static void _test_fault_panel_info()
+static void _test_fault_panel_info(lv_event_t *e)
 {
     lv_obj_t *view = _create_new_scr();
     if (!view) {
@@ -1247,7 +1247,7 @@ static void _test_fault_panel_info()
     }
 }
 
-static void _test_panel_no_icon()
+static void _test_panel_no_icon(lv_event_t *e)
 {
     lv_obj_t *view = _create_new_scr();
     if (!view) {
@@ -1278,7 +1278,7 @@ static void _test_panel_no_icon()
     }
 }
 
-static void _test_panel_list()
+static void _test_panel_list(lv_event_t *e)
 {
     eos_activity_t *activity = eos_activity_get_current();
     if (!activity) {
@@ -1449,7 +1449,7 @@ static void _test_audio_page_delete_cb(lv_event_t *e)
     memset(&s_test_audio_page, 0, sizeof(s_test_audio_page));
 }
 
-static void _test_audio_page()
+static void _test_audio_page(lv_event_t *e)
 {
     lv_obj_t *scr = _create_new_scr();
     memset(&s_test_audio_page, 0, sizeof(s_test_audio_page));
@@ -1485,7 +1485,7 @@ static void _test_audio_page()
     _test_audio_sync_ui();
 }
 
-static void _test_show_all_lv_symbols_list()
+static void _test_show_all_lv_symbols_list(lv_event_t *e)
 {
     lv_obj_t *scr = _create_new_scr();
 
@@ -1542,7 +1542,7 @@ static lv_obj_t *_add_slide_wdiget(lv_obj_t *parent)
     return obj;
 }
 
-static void _test_slide_widget()
+static void _test_slide_widget(lv_event_t *e)
 {
     lv_obj_t *scr = _create_new_scr();
     lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
@@ -1569,7 +1569,7 @@ static void _test_slide_widget()
     // eos_slide_widget_add_event_cb_moving(sw, _slide_widget_moving_cb, label);
 }
 
-static void _test_font_size()
+static void _test_font_size(lv_event_t *e)
 {
     lv_obj_t *scr = _create_new_scr();
     lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
@@ -1749,7 +1749,7 @@ static lv_obj_t *_create_sensor_test_scr(void)
     return view;
 }
 
-static void _test_sensor()
+static void _test_sensor(lv_event_t *e)
 {
     lv_obj_t *scr = _create_sensor_test_scr();
     if (!scr) {
