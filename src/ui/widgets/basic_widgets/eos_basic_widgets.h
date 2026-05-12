@@ -103,7 +103,7 @@ lv_draw_buf_t *eos_draw_buf_create(uint32_t w, uint32_t h, lv_color_format_t cf,
 /**
  * @brief Destroy a draw buffer
  */
-void eos_draw_buf_destory(lv_draw_buf_t *draw_buf);
+void eos_draw_buf_destroy(lv_draw_buf_t *draw_buf);
 /**
  * @brief Set switch state (with animation)
  * @param sw Target switch object

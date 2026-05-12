@@ -38,6 +38,17 @@ void eos_app_header_show(eos_activity_t *a);
  * @param duration_ms Animation duration (milliseconds), immediate switch when 0
  */
 void eos_app_header_set_visible_animated(eos_activity_t *a, bool visible, uint32_t duration_ms);
+
+/**
+ * @brief Slide app header vertically to show or hide it
+ * @param a Target activity (used to refresh title and color when showing, can be NULL when hiding)
+ * @param visible Whether to show
+ * @param duration_ms Animation duration (milliseconds), immediate switch when 0
+ *
+ * When hiding, the header slides upward out of the screen.
+ * When showing, the header slides downward back into place.
+ */
+void eos_app_header_slide_visible_animated(eos_activity_t *a, bool visible, uint32_t duration_ms);
 /**
  * @brief Initialize app header
  *

@@ -42,6 +42,7 @@
 #include "eos_service_haptic.h"
 #include "eos_service_display.h"
 #include "eos_activity.h"
+#include "eos_input_page.h"
 
 /* Macros and Definitions -------------------------------------*/
 #define _BRIGHTNESS_SMOOTH_DURATION 200
@@ -696,6 +697,45 @@ static void _settings_view_language(lv_event_t *e)
     eos_activity_enter(a);
 }
 
+static void _device_name_input_closed_cb(const char *text, eos_input_result_t result, void *user_data)
+{
+    if (result != EOS_INPUT_RESULT_OK)
+    {
+        return;
+    }
+
+    lv_obj_t *label = (lv_obj_t *)user_data;
+    const char *new_name = text ? text : "";
+
+    if (eos_config_set_string(EOS_CONFIG_KEY_DEVICE_NAME_STR, new_name) == EOS_OK)
+    {
+        if (label && lv_obj_is_valid(label))
+        {
+            lv_label_set_text(label, new_name);
+        }
+    }
+    else
+    {
+        EOS_LOG_E("Failed to save device name to config");
+    }
+}
+
+static void _device_name_click_cb(lv_event_t *e)
+{
+    lv_obj_t *label = lv_event_get_target(e);
+    EOS_CHECK_PTR_RETURN(label);
+
+    eos_result_t result = eos_input_page_open_with_callback(
+        label,
+        _device_name_input_closed_cb,
+        label);
+
+    if (result != EOS_OK)
+    {
+        EOS_LOG_E("Failed to open input page for device name edit");
+    }
+}
+
 static void _settings_view_device_info(lv_event_t *e)
 {
     lv_obj_t *view = NULL;
@@ -714,9 +754,15 @@ static void _settings_view_device_info(lv_event_t *e)
     char *device_name = eos_config_get_string(
         EOS_CONFIG_KEY_DEVICE_NAME_STR,
         EOS_CONFIG_DEFAULT_DEVICE_NAME);
-    eos_std_title_comment_create(list,
-                                 eos_lang_get_text(STR_ID_SETTINGS_GENERAL_DEVICE_NAME),
-                                 device_name);
+
+    lv_obj_t *title_label = eos_list_add_title(list, eos_lang_get_text(STR_ID_SETTINGS_GENERAL_DEVICE_NAME));
+    eos_label_set_font_size(title_label, EOS_FONT_SIZE_LARGE);
+
+    lv_obj_t *device_name_label = eos_list_add_comment(list, device_name);
+    lv_obj_set_style_text_color(device_name_label, EOS_COLOR_WHITE, 0);
+    lv_obj_add_flag(device_name_label, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(device_name_label, _device_name_click_cb, LV_EVENT_CLICKED, NULL);
+
     if (device_name)
         eos_free(device_name);
     eos_list_add_placeholder(list, 20);

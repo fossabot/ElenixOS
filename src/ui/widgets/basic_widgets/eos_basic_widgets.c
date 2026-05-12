@@ -171,7 +171,7 @@ lv_draw_buf_t *eos_draw_buf_create(uint32_t w, uint32_t h, lv_color_format_t cf,
     return draw_buf;
 }
 
-void eos_draw_buf_destory(lv_draw_buf_t *draw_buf)
+void eos_draw_buf_destroy(lv_draw_buf_t *draw_buf)
 {
     EOS_CHECK_PTR_RETURN(draw_buf);
     if (draw_buf->data)
@@ -211,7 +211,7 @@ lv_obj_t *eos_back_btn_create(lv_obj_t *parent, bool show_text)
          * previously allocated property list on every back button recreation. */
         lv_style_init(&style_pressed);
         lv_style_set_transform_scale(&style_pressed, 350);
-        lv_style_set_bg_color(&style_pressed, lv_color_lighten(EOS_THEME_SECONDARY_COLOR, 64));
+        lv_style_set_bg_color(&style_pressed, lv_color_lighten(EOS_THEME_BUTTON_COLOR, 64));
         style_pressed_inited = true;
     }
 
@@ -1139,7 +1139,7 @@ eos_list_slider_t *eos_list_add_slider(lv_obj_t *list, const char *txt)
     lv_obj_set_style_margin_all(list_slider->minus_btn, 0, 0);
     lv_obj_set_style_pad_all(list_slider->minus_btn, 0, 0);
     lv_obj_set_style_bg_opa(list_slider->minus_btn, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(list_slider->minus_btn, EOS_THEME_SECONDARY_COLOR, 0);
+    lv_obj_set_style_bg_color(list_slider->minus_btn, EOS_THEME_BUTTON_COLOR, 0);
     lv_obj_set_style_radius(list_slider->minus_btn, EOS_ITEM_RADIUS, 0);
     lv_obj_set_style_border_width(list_slider->minus_btn, 0, 0);
     lv_obj_align_to(list_slider->minus_btn, inner_container, LV_ALIGN_LEFT_MID, 0, 0);
@@ -1158,7 +1158,7 @@ eos_list_slider_t *eos_list_add_slider(lv_obj_t *list, const char *txt)
     lv_obj_set_style_margin_all(list_slider->plus_btn, 0, 0);
     lv_obj_set_style_pad_all(list_slider->plus_btn, 0, 0);
     lv_obj_set_style_bg_opa(list_slider->plus_btn, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(list_slider->plus_btn, EOS_THEME_SECONDARY_COLOR, 0);
+    lv_obj_set_style_bg_color(list_slider->plus_btn, EOS_THEME_BUTTON_COLOR, 0);
     lv_obj_set_style_border_width(list_slider->plus_btn, 0, 0);
     lv_obj_set_style_radius(list_slider->plus_btn, EOS_ITEM_RADIUS, 0);
     lv_obj_align_to(list_slider->plus_btn, inner_container, LV_ALIGN_RIGHT_MID, 0, 0);

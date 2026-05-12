@@ -35,6 +35,7 @@ typedef enum {
     STR_ID_LANGUAGE,
     STR_ID_ERROR,
     STR_ID_OK,
+    STR_ID_DONE,
     STR_ID_CANCEL,
     STR_ID_OFF,
     STR_ID_NORMAL,

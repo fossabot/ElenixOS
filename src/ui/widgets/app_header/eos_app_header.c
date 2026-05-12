@@ -70,6 +70,15 @@ static void _app_header_set_opa_anim_cb(void *var, int32_t value)
     lv_obj_set_style_opa(obj, (lv_opa_t)value, 0);
 }
 
+static void _app_header_set_translate_y_anim_cb(void *var, int32_t value)
+{
+    lv_obj_t *obj = (lv_obj_t *)var;
+    if (!obj || !lv_obj_is_valid(obj))
+        return;
+
+    lv_obj_set_style_translate_y(obj, value, 0);
+}
+
 static void _app_header_fade_out_ready_cb(lv_anim_t *a)
 {
     lv_obj_t *obj = (lv_obj_t *)a->var;
@@ -442,6 +451,78 @@ void eos_app_header_set_visible_animated(eos_activity_t *a, bool visible, uint32
     }
 }
 
+static void _app_header_slide_hide_ready_cb(lv_anim_t *a)
+{
+    lv_obj_t *container = (lv_obj_t *)a->var;
+    if (!container || !lv_obj_is_valid(container))
+    {
+        return;
+    }
+
+    lv_obj_add_flag(container, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_translate_y(container, 0, 0);
+}
+
+void eos_app_header_slide_visible_animated(eos_activity_t *a, bool visible, uint32_t duration_ms)
+{
+    EOS_CHECK_PTR_RETURN(app_header);
+
+    if (!(app_header->container && lv_obj_is_valid(app_header->container)))
+    {
+        return;
+    }
+
+    if (duration_ms == 0)
+    {
+        if (visible)
+        {
+            eos_app_header_show(a);
+        }
+        else
+        {
+            eos_app_header_hide();
+        }
+        return;
+    }
+
+    lv_obj_t *container = app_header->container;
+    lv_anim_del(container, _app_header_set_translate_y_anim_cb);
+    lv_anim_del(container, _app_header_set_opa_anim_cb);
+
+    int32_t header_height = lv_obj_get_height(container);
+    if (header_height <= 0)
+    {
+        header_height = _HEADER_HEIGHT;
+    }
+
+    lv_anim_t anim;
+    lv_anim_init(&anim);
+    lv_anim_set_var(&anim, container);
+    lv_anim_set_exec_cb(&anim, _app_header_set_translate_y_anim_cb);
+    lv_anim_set_path_cb(&anim, lv_anim_path_ease_in_out);
+    lv_anim_set_duration(&anim, duration_ms);
+
+    if (visible)
+    {
+        eos_app_header_show(a);
+        lv_obj_remove_flag(container, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_style_translate_y(container, -header_height, 0);
+        lv_anim_set_values(&anim, -header_height, 0);
+        lv_anim_start(&anim);
+    }
+    else
+    {
+        if (lv_obj_has_flag(container, LV_OBJ_FLAG_HIDDEN))
+        {
+            return;
+        }
+
+        lv_obj_set_style_translate_y(container, 0, 0);
+        lv_anim_set_values(&anim, 0, -header_height);
+        lv_anim_set_ready_cb(&anim, _app_header_slide_hide_ready_cb);
+        lv_anim_start(&anim);
+    }
+}
 /**
  * @brief Attach app header to specified View
  * @param view View to attach to

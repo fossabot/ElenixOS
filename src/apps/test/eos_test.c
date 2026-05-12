@@ -42,6 +42,7 @@
 #include "event/eos_test_event.h"
 #include "battery/eos_test_battery_history.h"
 #include "package/eos_test_package.h"
+#include "input/eos_test_input_page.h"
 #include "eos_crown.h"
 #include "eos_app_header.h"
 #include "eos_service_storage.h"
@@ -1814,6 +1815,12 @@ static void _test_event_cb(lv_event_t *e)
     eos_test_event_start();
 }
 
+static void _test_input_page_cb(lv_event_t *e)
+{
+    (void)e;
+    eos_test_input_page_start();
+}
+
 static void _test_battery_history_cb(lv_event_t *e)
 {
     (void)e;
@@ -1866,6 +1873,9 @@ void eos_test_start(void)
     // 事件系统测试
     btn = lv_list_add_button(test_list, RI_BUG_LINE, "Event System Test");
     lv_obj_add_event_cb(btn, _test_event_cb, LV_EVENT_CLICKED, NULL);
+    // 输入页面测试
+    btn = lv_list_add_button(test_list, RI_KEYBOARD_BOX_FILL, "Input Page Test");
+    lv_obj_add_event_cb(btn, _test_input_page_cb, LV_EVENT_CLICKED, NULL);
     // 电池历史图表测试
     btn = lv_list_add_button(test_list, RI_BATTERY_FILL, "Battery History");
     lv_obj_add_event_cb(btn, _test_battery_history_cb, LV_EVENT_CLICKED, NULL);
