@@ -63,10 +63,10 @@ typedef struct
     int32_t button_hidden_x;
 } eos_list_transition_state_t;
 
-static eos_list_transition_state_t g_list_transition_state = {0};
-static eos_list_transition_state_t g_list_transition_state_history[_LIST_TRANSITION_STATE_HISTORY_CAP] = {0};
-static uint32_t g_list_transition_state_history_count = 0U;
-static int32_t g_list_transition_selected_index = -1;
+static eos_list_transition_state_t _list_transition_state = {0};
+static eos_list_transition_state_t _list_transition_state_history[_LIST_TRANSITION_STATE_HISTORY_CAP] = {0};
+static uint32_t _list_transition_state_history_count = 0U;
+static int32_t _list_transition_selected_index = -1;
 
 static void _list_transition_clear_state(void);
 static void _list_transition_remove_state_at(uint32_t idx);
@@ -250,41 +250,41 @@ lv_obj_t *eos_list_create(lv_obj_t *parent)
 
 static void _list_transition_clear_state(void)
 {
-    g_list_transition_state.list = NULL;
-    g_list_transition_state.button = NULL;
-    g_list_transition_state.activity = NULL;
-    g_list_transition_state.button_hidden_x = 0;
-    g_list_transition_selected_index = -1;
+    _list_transition_state.list = NULL;
+    _list_transition_state.button = NULL;
+    _list_transition_state.activity = NULL;
+    _list_transition_state.button_hidden_x = 0;
+    _list_transition_selected_index = -1;
 }
 
 static void _list_transition_remove_state_at(uint32_t idx)
 {
-    if (idx >= g_list_transition_state_history_count)
+    if (idx >= _list_transition_state_history_count)
     {
         return;
     }
 
-    for (uint32_t i = idx; i + 1U < g_list_transition_state_history_count; i++)
+    for (uint32_t i = idx; i + 1U < _list_transition_state_history_count; i++)
     {
-        g_list_transition_state_history[i] = g_list_transition_state_history[i + 1U];
+        _list_transition_state_history[i] = _list_transition_state_history[i + 1U];
     }
-    g_list_transition_state_history_count--;
+    _list_transition_state_history_count--;
 
-    if (g_list_transition_selected_index == (int32_t)idx)
+    if (_list_transition_selected_index == (int32_t)idx)
     {
-        g_list_transition_selected_index = -1;
+        _list_transition_selected_index = -1;
     }
-    else if (g_list_transition_selected_index > (int32_t)idx)
+    else if (_list_transition_selected_index > (int32_t)idx)
     {
-        g_list_transition_selected_index--;
+        _list_transition_selected_index--;
     }
 }
 
 static void _list_transition_prune_invalid_states(void)
 {
-    for (uint32_t i = 0U; i < g_list_transition_state_history_count;)
+    for (uint32_t i = 0U; i < _list_transition_state_history_count;)
     {
-        eos_list_transition_state_t *s = &g_list_transition_state_history[i];
+        eos_list_transition_state_t *s = &_list_transition_state_history[i];
         bool valid = s->list && s->button && s->activity &&
                      lv_obj_is_valid(s->list) && lv_obj_is_valid(s->button) &&
                      _list_transition_is_descendant_of(s->button, s->list);
@@ -313,24 +313,24 @@ static void _list_transition_record_state(lv_obj_t *list, lv_obj_t *button, eos_
         .button_hidden_x = 0,
     };
 
-    for (uint32_t i = 0U; i < g_list_transition_state_history_count; i++)
+    for (uint32_t i = 0U; i < _list_transition_state_history_count; i++)
     {
-        if (g_list_transition_state_history[i].list == list)
+        if (_list_transition_state_history[i].list == list)
         {
             _list_transition_remove_state_at(i);
             break;
         }
     }
 
-    if (g_list_transition_state_history_count >= _LIST_TRANSITION_STATE_HISTORY_CAP)
+    if (_list_transition_state_history_count >= _LIST_TRANSITION_STATE_HISTORY_CAP)
     {
         _list_transition_remove_state_at(0U);
     }
 
-    g_list_transition_state_history[g_list_transition_state_history_count] = new_state;
-    g_list_transition_selected_index = (int32_t)g_list_transition_state_history_count;
-    g_list_transition_state_history_count++;
-    g_list_transition_state = new_state;
+    _list_transition_state_history[_list_transition_state_history_count] = new_state;
+    _list_transition_selected_index = (int32_t)_list_transition_state_history_count;
+    _list_transition_state_history_count++;
+    _list_transition_state = new_state;
 }
 
 static bool _list_transition_select_state_for_activity(eos_activity_t *expected_activity)
@@ -348,9 +348,9 @@ static bool _list_transition_select_state_for_activity(eos_activity_t *expected_
         return false;
     }
 
-    for (uint32_t i = g_list_transition_state_history_count; i > 0U; i--)
+    for (uint32_t i = _list_transition_state_history_count; i > 0U; i--)
     {
-        eos_list_transition_state_t *s = &g_list_transition_state_history[i - 1U];
+        eos_list_transition_state_t *s = &_list_transition_state_history[i - 1U];
         if (!_list_transition_is_descendant_of(s->list, expected_view))
         {
             continue;
@@ -360,8 +360,8 @@ static bool _list_transition_select_state_for_activity(eos_activity_t *expected_
             continue;
         }
 
-        g_list_transition_selected_index = (int32_t)(i - 1U);
-        g_list_transition_state = *s;
+        _list_transition_selected_index = (int32_t)(i - 1U);
+        _list_transition_state = *s;
         return true;
     }
 
@@ -378,15 +378,15 @@ static void _list_transition_list_delete_cb(lv_event_t *e)
 
     _list_transition_cancel_anims_for_list(list);
 
-    for (uint32_t i = g_list_transition_state_history_count; i > 0U; i--)
+    for (uint32_t i = _list_transition_state_history_count; i > 0U; i--)
     {
-        if (g_list_transition_state_history[i - 1U].list == list)
+        if (_list_transition_state_history[i - 1U].list == list)
         {
             _list_transition_remove_state_at(i - 1U);
         }
     }
 
-    if (g_list_transition_state.list == list)
+    if (_list_transition_state.list == list)
     {
         _list_transition_clear_state();
     }
@@ -411,9 +411,9 @@ static void _list_transition_cancel_anims_for_list(lv_obj_t *list)
 
     lv_anim_delete(list, NULL);
 
-    if (g_list_transition_state.button && lv_obj_is_valid(g_list_transition_state.button))
+    if (_list_transition_state.button && lv_obj_is_valid(_list_transition_state.button))
     {
-        lv_anim_delete(g_list_transition_state.button, NULL);
+        lv_anim_delete(_list_transition_state.button, NULL);
     }
 }
 
@@ -500,9 +500,9 @@ bool eos_list_transition_should_animate(eos_activity_t *from, eos_activity_t *to
         return false;
     }
 
-    if (g_list_transition_state.activity != expected_activity)
+    if (_list_transition_state.activity != expected_activity)
     {
-        EOS_LOG_D("should_animate: activity mismatch tolerated, saved=%p, expected=%p", g_list_transition_state.activity, expected_activity);
+        EOS_LOG_D("should_animate: activity mismatch tolerated, saved=%p, expected=%p", _list_transition_state.activity, expected_activity);
     }
 
     EOS_LOG_D("should_animate: PASS - will animate");
@@ -650,8 +650,8 @@ void eos_list_transition_play(lv_anim_timeline_t *at, eos_activity_t *from, eos_
     eos_activity_t *list_activity = back ? to : from;
     eos_activity_t *page_activity = back ? from : to;
     lv_obj_t *list_view = eos_activity_get_view(list_activity);
-    lv_obj_t *list = g_list_transition_state.list;
-    lv_obj_t *button = g_list_transition_state.button;
+    lv_obj_t *list = _list_transition_state.list;
+    lv_obj_t *button = _list_transition_state.button;
     if (!(list_view && list && button))
     {
         EOS_LOG_W("list_transition_play: invalid objects detected, skipping animation");
@@ -713,9 +713,9 @@ void eos_list_transition_play(lv_anim_timeline_t *at, eos_activity_t *from, eos_
     int32_t computed_hidden_x = -(btn_area.x1 + btn_w + 16);
     int32_t style_translate_x = lv_obj_get_style_translate_x(button, 0);
     int32_t button_hidden_x = computed_hidden_x;
-    if (g_list_transition_state.button_hidden_x < 0)
+    if (_list_transition_state.button_hidden_x < 0)
     {
-        button_hidden_x = g_list_transition_state.button_hidden_x;
+        button_hidden_x = _list_transition_state.button_hidden_x;
     }
 
     int32_t button_start_x;
@@ -729,10 +729,10 @@ void eos_list_transition_play(lv_anim_timeline_t *at, eos_activity_t *from, eos_
     {
         button_start_x = 0;
         button_end_x = button_hidden_x;
-        g_list_transition_state.button_hidden_x = button_hidden_x;
-        if (g_list_transition_selected_index >= 0 && (uint32_t)g_list_transition_selected_index < g_list_transition_state_history_count)
+        _list_transition_state.button_hidden_x = button_hidden_x;
+        if (_list_transition_selected_index >= 0 && (uint32_t)_list_transition_selected_index < _list_transition_state_history_count)
         {
-            g_list_transition_state_history[g_list_transition_selected_index].button_hidden_x = button_hidden_x;
+            _list_transition_state_history[_list_transition_selected_index].button_hidden_x = button_hidden_x;
         }
     }
     int32_t page_start_x = back ? 0 : EOS_DISPLAY_WIDTH;

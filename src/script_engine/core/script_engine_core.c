@@ -78,7 +78,7 @@ static script_engine_context_t engine_ctx = {
     .script_timeout_ms = SCRIPT_DEFAULT_TIMEOUT_MS,
     .stop_is_timeout = false};
 
-static eos_cqueue_t *g_module_queue = NULL;
+static eos_cqueue_t *_module_queue = NULL;
 
 static void _cleanup_module_task(module_task_t *task)
 {
@@ -100,10 +100,10 @@ static jerry_value_t _module_import_cb(const jerry_value_t specifier,
                                        void *user_p)
 {
     // If the queue doesn't exist, create it
-    if (!g_module_queue)
+    if (!_module_queue)
     {
-        g_module_queue = eos_cqueue_create(SCRIPT_DEFAULT_CQUEUE_CAPACITY);
-        if (!g_module_queue)
+        _module_queue = eos_cqueue_create(SCRIPT_DEFAULT_CQUEUE_CAPACITY);
+        if (!_module_queue)
         {
             EOS_LOG_E("Failed to create module queue");
             return jerry_throw_sz(JERRY_ERROR_COMMON, "Failed to create module queue");
@@ -125,7 +125,7 @@ static jerry_value_t _module_import_cb(const jerry_value_t specifier,
     task->promise = jerry_value_copy(promise);
 
     // Enqueue the task
-    if (!eos_cqueue_enqueue(g_module_queue, task))
+    if (!eos_cqueue_enqueue(_module_queue, task))
     {
         EOS_LOG_E("Failed to enqueue module task");
         jerry_value_free(task->specifier);
@@ -218,18 +218,18 @@ static jerry_value_t _read_and_parse_module(const char *file_path)
 
 static void _process_module_queue(void)
 {
-    if (!g_module_queue)
+    if (!_module_queue)
     {
         EOS_LOG_D("Module queue is empty");
         return;
     }
 
-    size_t task_count = eos_cqueue_get_size(g_module_queue);
+    size_t task_count = eos_cqueue_get_size(_module_queue);
     EOS_LOG_I("Processing %zu module(s)...", task_count);
 
-    while (eos_cqueue_get_size(g_module_queue) > 0)
+    while (eos_cqueue_get_size(_module_queue) > 0)
     {
-        module_task_t *task = (module_task_t *)eos_cqueue_dequeue(g_module_queue);
+        module_task_t *task = (module_task_t *)eos_cqueue_dequeue(_module_queue);
         if (!task)
         {
             continue;
@@ -298,14 +298,14 @@ static void _process_module_queue(void)
 
 static void _cleanup_module_queue(void)
 {
-    if (!g_module_queue)
+    if (!_module_queue)
     {
         return;
     }
 
-    while (eos_cqueue_get_size(g_module_queue) > 0)
+    while (eos_cqueue_get_size(_module_queue) > 0)
     {
-        module_task_t *task = (module_task_t *)eos_cqueue_dequeue(g_module_queue);
+        module_task_t *task = (module_task_t *)eos_cqueue_dequeue(_module_queue);
         if (task)
         {
             jerry_value_free(task->specifier);
@@ -315,8 +315,8 @@ static void _cleanup_module_queue(void)
         }
     }
 
-    eos_cqueue_destroy(g_module_queue);
-    g_module_queue = NULL;
+    eos_cqueue_destroy(_module_queue);
+    _module_queue = NULL;
 }
 
 jerry_value_t script_engine_throw_error(const char *message)

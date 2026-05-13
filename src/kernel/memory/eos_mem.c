@@ -27,7 +27,7 @@ typedef struct
 /* Variables --------------------------------------------------*/
 #if EOS_MEM_TRACK_ENABLE
 static lv_mem_monitor_t mon;
-static eos_mem_track_t g_mem_track[EOS_MEM_TRACK_MAX];
+static eos_mem_track_t _mem_track[EOS_MEM_TRACK_MAX];
 #endif /* EOS_MEM_TRACK_ENABLE */
 /* Function Implementations -----------------------------------*/
 
@@ -41,8 +41,8 @@ static size_t eos_mem_track_find(void *ptr)
         return 0;
     for (int i = 0; i < EOS_MEM_TRACK_MAX; i++)
     {
-        if (g_mem_track[i].ptr == ptr)
-            return g_mem_track[i].size;
+        if (_mem_track[i].ptr == ptr)
+            return _mem_track[i].size;
     }
     return 0;
 }
@@ -51,10 +51,10 @@ static void eos_mem_track_add(void *ptr, size_t size)
 {
     for (int i = 0; i < EOS_MEM_TRACK_MAX; i++)
     {
-        if (g_mem_track[i].ptr == NULL)
+        if (_mem_track[i].ptr == NULL)
         {
-            g_mem_track[i].ptr = ptr;
-            g_mem_track[i].size = size; // Update LVGL memory monitor
+            _mem_track[i].ptr = ptr;
+            _mem_track[i].size = size; // Update LVGL memory monitor
             mon.total_size += size;
             mon.used_cnt++;
             mon.max_used = mon.total_size - mon.free_size > mon.max_used ? mon.total_size - mon.free_size : mon.max_used;
@@ -69,11 +69,11 @@ static size_t eos_mem_track_remove(void *ptr)
         return 0;
     for (int i = 0; i < EOS_MEM_TRACK_MAX; i++)
     {
-        if (g_mem_track[i].ptr == ptr)
+        if (_mem_track[i].ptr == ptr)
         {
-            size_t sz = g_mem_track[i].size;
-            g_mem_track[i].ptr = NULL;
-            g_mem_track[i].size = 0;
+            size_t sz = _mem_track[i].size;
+            _mem_track[i].ptr = NULL;
+            _mem_track[i].size = 0;
             mon.free_cnt++;
             mon.free_size += sz;
             mon.used_cnt--;
@@ -173,7 +173,7 @@ void *eos_malloc_zeroed(size_t size)
 void lv_mem_init(void)
 {
 #if EOS_MEM_TRACK_ENABLE
-    memset(g_mem_track, 0, sizeof(g_mem_track));
+    memset(_mem_track, 0, sizeof(_mem_track));
     memset(&mon, 0, sizeof(mon));
 #endif /* EOS_MEM_TRACK_ENABLE */
 }

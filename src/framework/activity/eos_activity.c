@@ -97,7 +97,7 @@ typedef struct
 } eos_activity_ctx_t;
 
 /* Variables --------------------------------------------------*/
-static eos_activity_ctx_t g_activity_ctx = {
+static eos_activity_ctx_t _activity_ctx = {
     .watchface_activity = NULL,
     .current_activity = NULL,
     .visible_activity = NULL,
@@ -124,7 +124,7 @@ static void _activity_snapshot_release(eos_activity_t *activity);
 
 static bool _controller_initialized(void)
 {
-    return g_activity_ctx.activity_stack != NULL && g_activity_ctx.root_screen != NULL;
+    return _activity_ctx.activity_stack != NULL && _activity_ctx.root_screen != NULL;
 }
 
 static void _activity_run_destroy(eos_activity_t *activity)
@@ -159,15 +159,15 @@ static void _activity_run_destroy(eos_activity_t *activity)
 
 static void _activity_reset_context(void)
 {
-    g_activity_ctx.watchface_activity = NULL;
-    g_activity_ctx.current_activity = NULL;
-    g_activity_ctx.visible_activity = NULL;
-    g_activity_ctx.previous_activity = NULL;
-    g_activity_ctx.activity_stack = NULL;
-    g_activity_ctx.root_screen = NULL;
-    g_activity_ctx.transition_in_progress = false;
-    g_activity_ctx.snapshot_capture_window = false;
-    g_activity_ctx.active_anim_ctx = NULL;
+    _activity_ctx.watchface_activity = NULL;
+    _activity_ctx.current_activity = NULL;
+    _activity_ctx.visible_activity = NULL;
+    _activity_ctx.previous_activity = NULL;
+    _activity_ctx.activity_stack = NULL;
+    _activity_ctx.root_screen = NULL;
+    _activity_ctx.transition_in_progress = false;
+    _activity_ctx.snapshot_capture_window = false;
+    _activity_ctx.active_anim_ctx = NULL;
     memset(g_anim_callback_routes, 0, sizeof(g_anim_callback_routes));
 }
 
@@ -191,8 +191,8 @@ static void _anim_dummy_exec_cb(void *var, int32_t value)
 
 static void _activity_mark_visible(eos_activity_t *activity)
 {
-    g_activity_ctx.visible_activity = activity;
-    g_activity_ctx.transition_in_progress = false;
+    _activity_ctx.visible_activity = activity;
+    _activity_ctx.transition_in_progress = false;
     eos_event_post(EOS_EVENT_ACTIVITY_SCREEN_SWITCHED, activity ? activity->view : NULL, activity ? activity->view : NULL);
 }
 
@@ -297,7 +297,7 @@ static void _anim_clean_up_activity_deferred(void *user_data)
 static void _activity_switch_to(eos_activity_t *next_activity, bool is_returning)
 {
     EOS_CHECK_PTR_RETURN(next_activity);
-    eos_activity_t *cur_activity = g_activity_ctx.current_activity;
+    eos_activity_t *cur_activity = _activity_ctx.current_activity;
     if (cur_activity == next_activity)
     {
         _activity_mark_visible(next_activity);
@@ -313,8 +313,8 @@ static void _activity_switch_to(eos_activity_t *next_activity, bool is_returning
         return;
     }
 
-    g_activity_ctx.previous_activity = cur_activity;
-    g_activity_ctx.current_activity = next_activity;
+    _activity_ctx.previous_activity = cur_activity;
+    _activity_ctx.current_activity = next_activity;
 
     /* Keep target view hidden during lifecycle work to avoid transient one-frame flashes. */
     if (next_activity->view && lv_obj_is_valid(next_activity->view))
@@ -322,7 +322,7 @@ static void _activity_switch_to(eos_activity_t *next_activity, bool is_returning
         lv_obj_add_flag(next_activity->view, LV_OBJ_FLAG_HIDDEN);
     }
 
-    if (cur_activity == g_activity_ctx.watchface_activity && next_activity != g_activity_ctx.watchface_activity)
+    if (cur_activity == _activity_ctx.watchface_activity && next_activity != _activity_ctx.watchface_activity)
     {
         eos_control_center_t *cc = eos_control_center_get_instance();
         if (cc && cc->swipe_panel && cc->swipe_panel->sw &&
@@ -420,11 +420,11 @@ static void _activity_switch_to(eos_activity_t *next_activity, bool is_returning
             anim_ctx->to = next_activity;
             anim_ctx->destroy_from = cur_activity ? cur_activity->destroy_on_exit : false;
 
-            g_activity_ctx.transition_in_progress = true;
+            _activity_ctx.transition_in_progress = true;
             transition_started = true;
             _init_anim_timeline(anim_ctx);
-            g_activity_ctx.active_anim_ctx = anim_ctx;
-            g_activity_ctx.snapshot_capture_window = true;
+            _activity_ctx.active_anim_ctx = anim_ctx;
+            _activity_ctx.snapshot_capture_window = true;
             if (anim_cb)
             {
                 anim_cb(anim_ctx->at, cur_activity, next_activity);
@@ -433,8 +433,8 @@ static void _activity_switch_to(eos_activity_t *next_activity, bool is_returning
             {
                 eos_list_transition_play(anim_ctx->at, cur_activity, next_activity, cur_activity->destroy_on_exit);
             }
-            g_activity_ctx.snapshot_capture_window = false;
-            g_activity_ctx.active_anim_ctx = NULL;
+            _activity_ctx.snapshot_capture_window = false;
+            _activity_ctx.active_anim_ctx = NULL;
             _anim_timeline_start(cur_activity, next_activity, anim_ctx);
         }
     }
@@ -467,7 +467,7 @@ static lv_obj_t *_view_create(lv_obj_t *parent)
 {
     if (!parent)
     {
-        parent = g_activity_ctx.root_screen;
+        parent = _activity_ctx.root_screen;
     }
 
     lv_obj_t *view = lv_obj_create(parent);
@@ -622,7 +622,7 @@ void eos_activity_set_view(eos_activity_t *activity, lv_obj_t *view)
 
 lv_obj_t *eos_activity_get_root_screen(void)
 {
-    return g_activity_ctx.root_screen;
+    return _activity_ctx.root_screen;
 }
 
 lv_obj_t *eos_activity_take_snapshot(eos_activity_t *activity, bool include_header)
@@ -630,7 +630,7 @@ lv_obj_t *eos_activity_take_snapshot(eos_activity_t *activity, bool include_head
 #if LV_USE_SNAPSHOT
     EOS_CHECK_PTR_RETURN_VAL(activity, NULL);
 
-    if (!(g_activity_ctx.snapshot_capture_window && g_activity_ctx.active_anim_ctx))
+    if (!(_activity_ctx.snapshot_capture_window && _activity_ctx.active_anim_ctx))
     {
         EOS_LOG_W("eos_activity_take_snapshot is only allowed in animation callback");
         return NULL;
@@ -718,8 +718,8 @@ lv_obj_t *eos_activity_take_snapshot(eos_activity_t *activity, bool include_head
     snapshot_node->snapshot_obj = snapshot_obj;
     snapshot_node->draw_buf = snapshot;
     snapshot_node->owner = activity;
-    snapshot_node->next = g_activity_ctx.active_anim_ctx->snapshots;
-    g_activity_ctx.active_anim_ctx->snapshots = snapshot_node;
+    snapshot_node->next = _activity_ctx.active_anim_ctx->snapshots;
+    _activity_ctx.active_anim_ctx->snapshots = snapshot_node;
 
     lv_image_set_src(snapshot_obj, snapshot);
     lv_obj_set_pos(snapshot_obj, lv_obj_get_x(view), lv_obj_get_y(view));
@@ -736,7 +736,7 @@ lv_obj_t *eos_activity_take_snapshot(eos_activity_t *activity, bool include_head
 
 eos_activity_t *eos_activity_get_watchface(void)
 {
-    return g_activity_ctx.watchface_activity;
+    return _activity_ctx.watchface_activity;
 }
 
 const char *eos_activity_get_title(eos_activity_t *activity)
@@ -925,39 +925,39 @@ eos_result_t eos_activity_controller_init(eos_activity_t *initial_activity)
     {
         lv_obj_delete(lv_screen_active());
     }
-    g_activity_ctx.root_screen = lv_obj_create(NULL);
-    lv_obj_set_scrollbar_mode(g_activity_ctx.root_screen, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_remove_flag(g_activity_ctx.root_screen, LV_OBJ_FLAG_SCROLLABLE);
-    lv_screen_load(g_activity_ctx.root_screen);
+    _activity_ctx.root_screen = lv_obj_create(NULL);
+    lv_obj_set_scrollbar_mode(_activity_ctx.root_screen, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_remove_flag(_activity_ctx.root_screen, LV_OBJ_FLAG_SCROLLABLE);
+    lv_screen_load(_activity_ctx.root_screen);
 
-    g_activity_ctx.activity_stack = eos_stack_create_with_mode(_ACTIVITY_STACK_INIT_CAPACITY, EOS_STACK_CAPACITY_FIXED);
-    if (!g_activity_ctx.activity_stack)
+    _activity_ctx.activity_stack = eos_stack_create_with_mode(_ACTIVITY_STACK_INIT_CAPACITY, EOS_STACK_CAPACITY_FIXED);
+    if (!_activity_ctx.activity_stack)
     {
-        if (g_activity_ctx.root_screen)
+        if (_activity_ctx.root_screen)
         {
-            lv_obj_delete(g_activity_ctx.root_screen);
-            g_activity_ctx.root_screen = NULL;
+            lv_obj_delete(_activity_ctx.root_screen);
+            _activity_ctx.root_screen = NULL;
         }
         return EOS_FAILED;
     }
 
     if (!initial_activity->view)
     {
-        initial_activity->view = _view_create(g_activity_ctx.root_screen);
+        initial_activity->view = _view_create(_activity_ctx.root_screen);
     }
     else
     {
-        lv_obj_set_parent(initial_activity->view, g_activity_ctx.root_screen);
+        lv_obj_set_parent(initial_activity->view, _activity_ctx.root_screen);
     }
 
     if (!initial_activity->view)
     {
-        eos_stack_destroy(g_activity_ctx.activity_stack);
+        eos_stack_destroy(_activity_ctx.activity_stack);
         _activity_reset_context();
         return EOS_FAILED;
     }
 
-    g_activity_ctx.watchface_activity = initial_activity;
+    _activity_ctx.watchface_activity = initial_activity;
 
         if (initial_activity->lifecycle.on_enter)
     {
@@ -965,9 +965,9 @@ eos_result_t eos_activity_controller_init(eos_activity_t *initial_activity)
         initial_activity->has_started = true;
     }
     _activity_show(initial_activity);
-    g_activity_ctx.current_activity = initial_activity;
-    g_activity_ctx.visible_activity = initial_activity;
-    g_activity_ctx.transition_in_progress = false;
+    _activity_ctx.current_activity = initial_activity;
+    _activity_ctx.visible_activity = initial_activity;
+    _activity_ctx.transition_in_progress = false;
 
     if (initial_activity->is_app_header_visible)
     {
@@ -989,9 +989,9 @@ eos_activity_t *eos_activity_create(const eos_activity_lifecycle_t *lifecycle)
         return NULL;
     }
 
-    if (g_activity_ctx.root_screen)
+    if (_activity_ctx.root_screen)
     {
-        activity->view = _view_create(g_activity_ctx.root_screen);
+        activity->view = _view_create(_activity_ctx.root_screen);
         if (!activity->view)
         {
             eos_free(activity);
@@ -1032,25 +1032,25 @@ void eos_activity_enter(eos_activity_t *activity)
         return;
     }
 
-    if (g_activity_ctx.transition_in_progress)
+    if (_activity_ctx.transition_in_progress)
     {
         EOS_LOG_W("Activity transition in progress");
         return;
     }
 
-    if (g_activity_ctx.current_activity == activity)
+    if (_activity_ctx.current_activity == activity)
     {
         _activity_show(activity);
         return;
     }
 
-    if (activity == g_activity_ctx.watchface_activity)
+    if (activity == _activity_ctx.watchface_activity)
     {
         _activity_switch_to(activity, false);
         return;
     }
 
-    if (!eos_stack_push(g_activity_ctx.activity_stack, activity))
+    if (!eos_stack_push(_activity_ctx.activity_stack, activity))
     {
         return;
     }
@@ -1065,42 +1065,42 @@ eos_result_t eos_activity_back(void)
         return EOS_FAILED;
     }
 
-    if (g_activity_ctx.transition_in_progress)
+    if (_activity_ctx.transition_in_progress)
     {
         EOS_LOG_W("Activity transition in progress");
         return EOS_FAILED;
     }
 
-    if (g_activity_ctx.current_activity != g_activity_ctx.visible_activity)
+    if (_activity_ctx.current_activity != _activity_ctx.visible_activity)
     {
         EOS_LOG_W("Activity state mismatch");
         return EOS_FAILED;
     }
 
-    if (eos_stack_get_size(g_activity_ctx.activity_stack) == 0)
+    if (eos_stack_get_size(_activity_ctx.activity_stack) == 0)
     {
-        if (g_activity_ctx.watchface_activity && g_activity_ctx.current_activity != g_activity_ctx.watchface_activity)
+        if (_activity_ctx.watchface_activity && _activity_ctx.current_activity != _activity_ctx.watchface_activity)
         {
-            _activity_switch_to(g_activity_ctx.watchface_activity, true);
+            _activity_switch_to(_activity_ctx.watchface_activity, true);
             return EOS_OK;
         }
         return EOS_FAILED;
     }
 
-    eos_activity_t *current = eos_stack_pop(g_activity_ctx.activity_stack);
+    eos_activity_t *current = eos_stack_pop(_activity_ctx.activity_stack);
     EOS_CHECK_PTR_RETURN_VAL(current, EOS_FAILED);
 
-    eos_activity_t *cur_activity = g_activity_ctx.current_activity;
+    eos_activity_t *cur_activity = _activity_ctx.current_activity;
     cur_activity->destroy_on_exit = true;
 
     eos_activity_t *prev = NULL;
-    if (eos_stack_get_size(g_activity_ctx.activity_stack) == 0)
+    if (eos_stack_get_size(_activity_ctx.activity_stack) == 0)
     {
-        prev = g_activity_ctx.watchface_activity;
+        prev = _activity_ctx.watchface_activity;
     }
     else
     {
-        prev = eos_stack_peek(g_activity_ctx.activity_stack);
+        prev = eos_stack_peek(_activity_ctx.activity_stack);
     }
 
     EOS_CHECK_PTR_RETURN_VAL(prev, EOS_FAILED);
@@ -1117,14 +1117,14 @@ eos_result_t eos_activity_back_to_watchface(void)
         return EOS_FAILED;
     }
 
-    if (g_activity_ctx.transition_in_progress)
+    if (_activity_ctx.transition_in_progress)
     {
         EOS_LOG_W("Activity transition in progress");
         return EOS_FAILED;
     }
 
-    eos_activity_t *watchface = g_activity_ctx.watchface_activity;
-    eos_activity_t *current = g_activity_ctx.current_activity;
+    eos_activity_t *watchface = _activity_ctx.watchface_activity;
+    eos_activity_t *current = _activity_ctx.current_activity;
     if (!watchface || !current)
     {
         return EOS_FAILED;
@@ -1135,9 +1135,9 @@ eos_result_t eos_activity_back_to_watchface(void)
         return EOS_OK;
     }
 
-    while (eos_stack_get_size(g_activity_ctx.activity_stack) > 0)
+    while (eos_stack_get_size(_activity_ctx.activity_stack) > 0)
     {
-        eos_activity_t *activity = eos_stack_pop(g_activity_ctx.activity_stack);
+        eos_activity_t *activity = eos_stack_pop(_activity_ctx.activity_stack);
         if (!activity)
         {
             continue;
@@ -1146,7 +1146,7 @@ eos_result_t eos_activity_back_to_watchface(void)
         _activity_run_destroy(activity);
     }
 
-    eos_activity_t *cur_activity = g_activity_ctx.current_activity;
+    eos_activity_t *cur_activity = _activity_ctx.current_activity;
     cur_activity->destroy_on_exit = true;
 
     _activity_switch_to(watchface, true);
@@ -1164,10 +1164,10 @@ eos_activity_t *eos_activity_get_current(void)
     {
         return NULL;
     }
-    if (g_activity_ctx.current_activity)
-        return g_activity_ctx.current_activity;
-    if (g_activity_ctx.watchface_activity)
-        return g_activity_ctx.watchface_activity;
+    if (_activity_ctx.current_activity)
+        return _activity_ctx.current_activity;
+    if (_activity_ctx.watchface_activity)
+        return _activity_ctx.watchface_activity;
     return NULL;
 }
 
@@ -1177,8 +1177,8 @@ eos_activity_t *eos_activity_get_visible(void)
     {
         return NULL;
     }
-    if (g_activity_ctx.visible_activity)
-        return g_activity_ctx.visible_activity;
+    if (_activity_ctx.visible_activity)
+        return _activity_ctx.visible_activity;
     return eos_activity_get_current();
 }
 
@@ -1188,12 +1188,12 @@ eos_activity_t *eos_activity_get_previous(void)
     {
         return NULL;
     }
-    return g_activity_ctx.previous_activity;
+    return _activity_ctx.previous_activity;
 }
 
 bool eos_activity_is_transition_in_progress(void)
 {
-    return g_activity_ctx.transition_in_progress;
+    return _activity_ctx.transition_in_progress;
 }
 
 eos_activity_t *eos_activity_get_bottom(void)
@@ -1202,38 +1202,38 @@ eos_activity_t *eos_activity_get_bottom(void)
     {
         return NULL;
     }
-    return g_activity_ctx.watchface_activity;
+    return _activity_ctx.watchface_activity;
 }
 
 void eos_activity_controller_deinit(void)
 {
-    if (!g_activity_ctx.activity_stack)
+    if (!_activity_ctx.activity_stack)
     {
-        if (g_activity_ctx.root_screen)
+        if (_activity_ctx.root_screen)
         {
-            lv_obj_delete(g_activity_ctx.root_screen);
-            g_activity_ctx.root_screen = NULL;
+            lv_obj_delete(_activity_ctx.root_screen);
+            _activity_ctx.root_screen = NULL;
         }
         return;
     }
 
-    while (eos_stack_get_size(g_activity_ctx.activity_stack) > 0)
+    while (eos_stack_get_size(_activity_ctx.activity_stack) > 0)
     {
-        eos_activity_t *activity = eos_stack_pop(g_activity_ctx.activity_stack);
+        eos_activity_t *activity = eos_stack_pop(_activity_ctx.activity_stack);
         _activity_run_destroy(activity);
     }
 
-    if (g_activity_ctx.watchface_activity)
+    if (_activity_ctx.watchface_activity)
     {
-        _activity_run_destroy(g_activity_ctx.watchface_activity);
-        g_activity_ctx.watchface_activity = NULL;
+        _activity_run_destroy(_activity_ctx.watchface_activity);
+        _activity_ctx.watchface_activity = NULL;
     }
 
-    eos_stack_destroy(g_activity_ctx.activity_stack);
+    eos_stack_destroy(_activity_ctx.activity_stack);
 
-    if (g_activity_ctx.root_screen)
+    if (_activity_ctx.root_screen)
     {
-        lv_obj_delete(g_activity_ctx.root_screen);
+        lv_obj_delete(_activity_ctx.root_screen);
     }
 
     _activity_reset_context();
