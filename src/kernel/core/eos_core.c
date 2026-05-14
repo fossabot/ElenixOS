@@ -39,6 +39,7 @@
 #include "eos_dispatcher.h"
 #include "eos_anim.h"
 #include "eos_control_center.h"
+#include "eos_chrome_manager.h"
 #include "eos_service_storage.h"
 #include "eos_service_state.h"
 #include "eos_service_battery.h"
@@ -176,6 +177,7 @@ void eos_init(void)
     eos_app_header_init();
     eos_msg_list_init();
     eos_control_center_init();
+    eos_chrome_manager_init();
     eos_service_pm_init();
 
     eos_activity_t *watchface_activity = eos_watchface_get_activity();

@@ -277,6 +277,9 @@ void eos_swipe_panel_slide_down(eos_swipe_panel_t *sp)
 
     eos_slide_widget_move(sp->sw, base, target, SWIPE_ANIM_DURATION);
 
+    lv_obj_move_foreground(sp->swipe_obj);
+    lv_obj_move_foreground(sp->sw->touch_obj);
+
     if (sp->sw->dir == EOS_SLIDE_DIR_VER)
     {
         lv_obj_set_y(sp->sw->touch_obj, sp->sw->touch_obj_target);
@@ -356,7 +359,8 @@ eos_swipe_panel_t *eos_swipe_panel_create(lv_obj_t *parent)
     lv_obj_set_style_bg_color(sp->swipe_obj, EOS_COLOR_BLACK, 0);
     lv_obj_set_style_border_width(sp->swipe_obj, 0, 0);
     lv_obj_set_style_shadow_width(sp->swipe_obj, 0, 0);
-    lv_obj_set_style_radius(sp->swipe_obj, 0, 0);
+    lv_obj_set_style_radius(sp->swipe_obj, EOS_DISPLAY_RADIUS, 0);
+    lv_obj_set_style_clip_corner(sp->swipe_obj, true, 0);
     lv_obj_set_style_pad_all(sp->swipe_obj, 0, 0);
     // 默认是下拉栏
     lv_obj_set_y(sp->swipe_obj, -EOS_DISPLAY_HEIGHT);

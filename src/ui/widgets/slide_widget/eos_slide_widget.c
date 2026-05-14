@@ -20,7 +20,7 @@
 #include "eos_event.h"
 
 /* Macros and Definitions -------------------------------------*/
-#define DEBUG_TOUCH_AREA 0 /**< Highlight touch area */
+#define DEBUG_TOUCH_AREA 1 /**< Highlight touch area */
 #define SLIDE_ANIM_DURATION 120
 
 /* Variables --------------------------------------------------*/
@@ -136,10 +136,12 @@ static void _touch_obj_pressed_cb(lv_event_t *e)
     if (sw->dir == EOS_SLIDE_DIR_VER)
     {
         sw->_indev_start = p.y;
+        sw->_target_start = lv_obj_get_y(sw->target_obj);
     }
     else
     {
         sw->_indev_start = p.x;
+        sw->_target_start = lv_obj_get_x(sw->target_obj);
     }
 
     if (sw->move_foreground_on_pressed)
@@ -164,7 +166,7 @@ static void _touch_obj_pressing_cb(lv_event_t *e)
                                 ? (p.y - sw->_indev_start)
                                 : (p.x - sw->_indev_start);
 
-    lv_coord_t new_pos = sw->base;
+    lv_coord_t new_pos = sw->_target_start;
     new_pos += touch_diff;
 
     // Set new position
@@ -299,10 +301,8 @@ static void _touch_obj_released_cb(lv_event_t *e)
 
     if (total_move_range != 0 && scaled_swipe_dist / total_move_range > sw->threshold)
     {
-        // 超过阈值，判断方向
         if (swipe_delta * move_delta >= 0)
         {
-            // 正向滑动
             transit_state = EOS_SLIDE_WIDGET_STATE_THRESHOLD;
             settle_state = sw->reversed ? EOS_SLIDE_WIDGET_STATE_IDLE : EOS_SLIDE_WIDGET_STATE_OPEN;
             EOS_LOG_I("Forward swipe: go to target");
@@ -313,7 +313,6 @@ static void _touch_obj_released_cb(lv_event_t *e)
         }
         else
         {
-            // 反向
             if (sw->bidirectional)
             {
                 transit_state = EOS_SLIDE_WIDGET_STATE_THRESHOLD;
@@ -326,18 +325,17 @@ static void _touch_obj_released_cb(lv_event_t *e)
             {
                 transit_state = EOS_SLIDE_WIDGET_STATE_REVERTING;
                 settle_state = EOS_SLIDE_WIDGET_STATE_IDLE;
-                EOS_LOG_I("Reverse swipe in single direction: return to base");
-                target = sw->base;
+                EOS_LOG_I("Reverse swipe: revert to start position");
+                target = sw->_target_start;
             }
         }
     }
     else
     {
-        // 未达到阈值，无论方向都回到 base
         transit_state = EOS_SLIDE_WIDGET_STATE_REVERTING;
         settle_state = EOS_SLIDE_WIDGET_STATE_IDLE;
-        EOS_LOG_I("Swipe below threshold: revert to base");
-        target = sw->base;
+        EOS_LOG_I("Swipe below threshold: revert to start position");
+        target = sw->_target_start;
     }
 
     _start_slide_anim(sw, cur, target, SLIDE_ANIM_DURATION, transit_state, settle_state);

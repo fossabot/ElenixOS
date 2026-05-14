@@ -18,7 +18,7 @@
 #include "input/eos_input.h"
 #include "eos_anim.h"
 #include "eos_activity.h"
-#include "eos_app_list.h"
+#include "eos_chrome_manager.h"
 #include "eos_control_center.h"
 #include "eos_msg_list.h"
 #include "eos_swipe_panel.h"
@@ -214,53 +214,12 @@ static void _scrollbar_hide_set_anim(void)
 
 static void _crown_button_async_cb(void *user_data)
 {
-    eos_control_center_t *cc = NULL;
-    eos_msg_list_t *msg_list = NULL;
-
-    if (eos_pm_get_state() == EOS_PM_SLEEP)
-    {
-        eos_pm_wake_up();
-        return;
-    }
-    eos_pm_reset_timer();
     eos_button_state_t state = (eos_button_state_t)(intptr_t)user_data;
     switch (state)
     {
     case EOS_BUTTON_STATE_CLICKED:
-    {
-        bool from_watchface = (eos_activity_get_current() == eos_activity_get_watchface());
-
-        // 检查控制中心
-        cc = eos_control_center_get_instance();
-        if (cc && cc->swipe_panel && cc->swipe_panel->sw)
-        {
-            if (cc->swipe_panel->sw->state == EOS_SLIDE_WIDGET_STATE_OPEN)
-            {
-                eos_swipe_panel_pull_back(cc->swipe_panel);
-            }
-        }
-
-        // 检查消息列表
-        msg_list = eos_msg_list_get_instance();
-        if (msg_list && msg_list->swipe_panel && msg_list->swipe_panel->sw)
-        {
-            if (msg_list->swipe_panel->sw->state == EOS_SLIDE_WIDGET_STATE_OPEN)
-            {
-                eos_swipe_panel_pull_back(msg_list->swipe_panel);
-            }
-        }
-
-        if (from_watchface)
-        {
-            // 从表盘进入其他 Activity 时，先拉回 overlay，再继续进入。
-            eos_app_list_enter();
-        }
-        else
-        {
-            eos_activity_back();
-        }
+        eos_chrome_manager_handle_crown_click();
         break;
-    }
     default:
         break;
     }

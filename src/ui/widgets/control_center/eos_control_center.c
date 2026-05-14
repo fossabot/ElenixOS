@@ -28,6 +28,7 @@
 #include "eos_basic_widgets.h"
 #include "eos_crown.h"
 #include "eos_service_battery.h"
+#include "eos_chrome_manager.h"
 
 /* Macros and Definitions -------------------------------------*/
 #define _BTN_DEFAULT_COLOR EOS_THEME_SECONDARY_COLOR
@@ -397,6 +398,13 @@ static void _control_center_settings_entry_cb(lv_event_t *e)
     eos_settings_enter();
     eos_control_panel_slide_change();
 }
+
+static void _control_center_opened_cb(lv_event_t *e)
+{
+    EOS_LOG_I("Control center opened");
+    eos_chrome_manager_notify_overlay_opened("control_center");
+}
+
 /************************** Control center **************************/
 
 eos_control_center_t *eos_control_center_create(lv_obj_t *parent)
@@ -408,6 +416,9 @@ eos_control_center_t *eos_control_center_create(lv_obj_t *parent)
     eos_swipe_panel_set_dir(swipe_panel, EOS_SWIPE_DIR_UP);
     eos_crown_encoder_register_slide_widget(swipe_panel->sw);
     eos_swipe_panel_show_handle_bar(swipe_panel);
+
+    eos_slide_widget_add_event_cb_opened(swipe_panel->sw, _control_center_opened_cb, NULL);
+
     cc->swipe_panel = swipe_panel;
 
     lv_obj_t *container = lv_list_create(swipe_panel->swipe_obj);
@@ -487,13 +498,14 @@ eos_control_center_t *eos_control_center_create(lv_obj_t *parent)
 void eos_control_panel_slide_change(void)
 {
     EOS_CHECK_PTR_RETURN(control_center_instance);
-    if (lv_obj_get_y(control_center_instance->swipe_panel->swipe_obj) >= EOS_DISPLAY_HEIGHT)
+    eos_swipe_panel_t *sp = control_center_instance->swipe_panel;
+    if (sp->sw->state == EOS_SLIDE_WIDGET_STATE_OPEN)
     {
-        eos_swipe_panel_slide_down(control_center_instance->swipe_panel);
+        eos_swipe_panel_slide_up(sp);
     }
     else
     {
-        eos_swipe_panel_slide_up(control_center_instance->swipe_panel);
+        eos_swipe_panel_slide_down(sp);
     }
 }
 

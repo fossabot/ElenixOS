@@ -115,6 +115,10 @@ eos_msg_list_t *eos_msg_list_get_instance(void);
  */
 void eos_msg_list_init(void);
 /**
+ * @brief Close detail page if open (for chrome manager integration)
+ */
+void eos_msg_list_close_detail(void);
+/**
  * @brief Show message list
  */
 void eos_msg_list_show(void);

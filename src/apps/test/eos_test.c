@@ -62,7 +62,6 @@ LV_FONT_DECLARE(eos_font_resource_han_rounded_30);
 /* Variables --------------------------------------------------*/
 static lv_obj_t *img = NULL;    // Global image object
 static lv_obj_t *ta = NULL;     // Global text input object
-extern script_pkg_t script_pkg; // Script package
 /* Function Implementations -----------------------------------*/
 
 typedef struct

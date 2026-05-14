@@ -20,8 +20,7 @@
 #include "eos_lang.h"
 #include "eos_basic_widgets.h"
 #include "eos_app_header.h"
-#include "eos_control_center.h"
-#include "eos_msg_list.h"
+#include "eos_chrome_manager.h"
 #include "eos_event.h"
 #include "eos_image.h"
 /* Macros and Definitions -------------------------------------*/
@@ -322,25 +321,7 @@ static void _activity_switch_to(eos_activity_t *next_activity, bool is_returning
         lv_obj_add_flag(next_activity->view, LV_OBJ_FLAG_HIDDEN);
     }
 
-    if (cur_activity == _activity_ctx.watchface_activity && next_activity != _activity_ctx.watchface_activity)
-    {
-        eos_control_center_t *cc = eos_control_center_get_instance();
-        if (cc && cc->swipe_panel && cc->swipe_panel->sw &&
-            cc->swipe_panel->sw->state == EOS_SLIDE_WIDGET_STATE_OPEN)
-        {
-            eos_swipe_panel_pull_back(cc->swipe_panel);
-        }
-
-        eos_msg_list_t *msg_list = eos_msg_list_get_instance();
-        if (msg_list && msg_list->swipe_panel && msg_list->swipe_panel->sw &&
-            msg_list->swipe_panel->sw->state == EOS_SLIDE_WIDGET_STATE_OPEN)
-        {
-            eos_swipe_panel_pull_back(msg_list->swipe_panel);
-        }
-    }
-
-    eos_control_center_hide();
-    eos_msg_list_hide();
+    eos_chrome_manager_handle_activity_switch();
 
         if (!is_returning && cur_activity && cur_activity->lifecycle.on_pause)
     {
@@ -478,6 +459,7 @@ static lv_obj_t *_view_create(lv_obj_t *parent)
 
     lv_obj_remove_style_all(view);
     lv_obj_add_style(view, eos_theme_get_view_style(), 0);
+    lv_obj_set_style_radius(view, EOS_DISPLAY_RADIUS, 0);
     lv_obj_update_layout(view);
 
     return view;

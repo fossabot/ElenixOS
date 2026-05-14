@@ -27,6 +27,7 @@
 #include "eos_basic_widgets.h"
 #include "eos_app_header.h"
 #include "eos_mem.h"
+#include "eos_chrome_manager.h"
 
 /* Macros and Definitions -------------------------------------*/
 #define _MASK_OPA LV_OPA_80
@@ -45,6 +46,9 @@ typedef struct
     eos_swipe_panel_t *sp;
     lv_obj_t *mask;
 } _pressing_user_data_t;
+
+/* Static variables for overlay management */
+static _pressing_user_data_t *_flash_light_ud = NULL;
 
 typedef struct
 {
@@ -133,6 +137,9 @@ static inline void _flash_light_delete(_pressing_user_data_t *ud)
 
     ud->mask = NULL;
     ud->sp = NULL;
+
+    if (_flash_light_ud == ud)
+        _flash_light_ud = NULL;
 
     eos_free(ud);
     EOS_LOG_I("Flash light deleted");
@@ -376,6 +383,12 @@ static lv_obj_t *_flash_light_get_indicator_for_page(eos_card_pager_t *cp, lv_ob
 
 void eos_flash_light_show(void)
 {
+    if (_flash_light_ud)
+    {
+        EOS_LOG_W("Flash light is already showing");
+        return;
+    }
+
     _pressing_user_data_t *ud = eos_malloc(sizeof(_pressing_user_data_t));
     EOS_CHECK_PTR_RETURN(ud);
 
@@ -434,7 +447,32 @@ void eos_flash_light_show(void)
                         LV_EVENT_CLICKED,
                         ud);
 
+    _flash_light_ud = ud;
     eos_display_set_brightness(EOS_DISPLAY_BRIGHTNESS_MAX, _BRIGHTNESS_DURATION, true);
+    eos_chrome_manager_notify_overlay_opened("flash_light");
+}
+
+bool eos_flash_light_is_open(void)
+{
+    if (!_flash_light_ud || !_flash_light_ud->sp || !_flash_light_ud->sp->sw)
+        return false;
+    return _flash_light_ud->sp->sw->state == EOS_SLIDE_WIDGET_STATE_OPEN;
+}
+
+void eos_flash_light_pull_back(void)
+{
+    if (_flash_light_ud && _flash_light_ud->sp)
+    {
+        eos_swipe_panel_pull_back(_flash_light_ud->sp);
+    }
+}
+
+void eos_flash_light_hide(void)
+{
+    if (_flash_light_ud)
+    {
+        _flash_light_delete(_flash_light_ud);
+    }
 }
 
 void eos_flash_light_enter(void)

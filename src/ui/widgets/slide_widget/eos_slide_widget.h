@@ -65,6 +65,7 @@ typedef struct
     eos_slide_widget_state_t state;
     eos_slide_widget_state_t settle_state; /**< Settling state after current animation completes */
     lv_coord_t _indev_start;            /**< Touch start point */
+    lv_coord_t _target_start;           /**< Target object position at press time */
     lv_coord_t last_touch_displacement; /**< Previous movement displacement */
     bool bidirectional;                 /**< Whether to support bidirectional sliding */
     bool move_foreground_on_pressed;    /**< Whether to move to foreground when pressed, default on, auto off when parent is `lv_list_class` */

@@ -30,6 +30,22 @@ void eos_flash_light_show(void);
  */
 void eos_flash_light_enter(void);
 
+/**
+ * @brief Check if flashlight overlay is currently open.
+ * @return true if open, false otherwise.
+ */
+bool eos_flash_light_is_open(void);
+
+/**
+ * @brief Pull back (close with animation) the flashlight overlay.
+ */
+void eos_flash_light_pull_back(void);
+
+/**
+ * @brief Hide the flashlight overlay immediately (no animation).
+ */
+void eos_flash_light_hide(void);
+
 #ifdef __cplusplus
 }
 #endif
