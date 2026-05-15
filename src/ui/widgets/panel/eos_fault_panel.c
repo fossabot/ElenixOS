@@ -48,6 +48,18 @@ static eos_panel_icon_type_t _fault_icon_type_to_panel(eos_fault_icon_t icon_typ
     return EOS_PANEL_ICON_TYPE_SYMBOL;
 }
 
+static void _eos_fault_panel_container_delete_cb(lv_event_t *e)
+{
+    eos_fault_panel_t *fault_panel = (eos_fault_panel_t *)lv_event_get_user_data(e);
+
+    if (fault_panel)
+    {
+        fault_panel->panel = NULL;
+        eos_free(fault_panel);
+        EOS_LOG_D("Fault panel auto-freed on container delete: %p", (void *)fault_panel);
+    }
+}
+
 eos_fault_panel_t *eos_fault_panel_create(const eos_fault_cfg_t *cfg)
 {
     return eos_fault_panel_create_on_activity(NULL, cfg);
@@ -100,6 +112,12 @@ eos_fault_panel_t *eos_fault_panel_create_on_activity(eos_activity_t *activity, 
 
     fault_panel->extra_slot = eos_panel_get_extra_slot((eos_panel_t *)fault_panel->panel);
 
+    lv_obj_t *container = ((eos_panel_t *)fault_panel->panel)->container;
+    if (container)
+    {
+        lv_obj_add_event_cb(container, _eos_fault_panel_container_delete_cb, LV_EVENT_DELETE, fault_panel);
+    }
+
     return fault_panel;
 }
 
@@ -121,7 +139,15 @@ void eos_fault_panel_delete(eos_fault_panel_t *panel)
 
     if (panel->panel)
     {
-        eos_panel_delete((eos_panel_t *)panel->panel);
+        eos_panel_t *inner_panel = (eos_panel_t *)panel->panel;
+
+        if (inner_panel->container && lv_obj_is_valid(inner_panel->container))
+        {
+            lv_obj_remove_event_cb_with_user_data(inner_panel->container, _eos_fault_panel_container_delete_cb, panel);
+        }
+
+        panel->panel = NULL;
+        eos_panel_delete(inner_panel);
     }
 
     eos_free(panel);

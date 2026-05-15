@@ -32,6 +32,18 @@ static void _panel_default_cancel_cb(lv_event_t *e)
     eos_activity_back();
 }
 
+static void _eos_panel_container_delete_cb(lv_event_t *e)
+{
+    eos_panel_t *panel = (eos_panel_t *)lv_event_get_user_data(e);
+
+    if (panel)
+    {
+        panel->container = NULL;
+        eos_free(panel);
+        EOS_LOG_D("Panel auto-freed on container delete: %p", (void *)panel);
+    }
+}
+
 static void _eos_panel_build_content(eos_panel_t *panel, const eos_panel_cfg_t *cfg)
 {
     lv_obj_t *container = panel->container;
@@ -246,6 +258,8 @@ eos_panel_t *eos_panel_create(lv_obj_t *parent, const eos_panel_cfg_t *cfg)
     lv_obj_set_style_pad_top(panel->container, _PANEL_PAD_TOP, 0);
     lv_obj_set_style_pad_bottom(panel->container, _PANEL_PAD_BOTTOM, 0);
 
+    lv_obj_add_event_cb(panel->container, _eos_panel_container_delete_cb, LV_EVENT_DELETE, panel);
+
     _eos_panel_build_content(panel, cfg);
 
     return panel;
@@ -269,6 +283,7 @@ void eos_panel_delete(eos_panel_t *panel)
 
     if (panel->container && lv_obj_is_valid(panel->container))
     {
+        lv_obj_remove_event_cb(panel->container, _eos_panel_container_delete_cb);
         lv_obj_del(panel->container);
     }
 
