@@ -641,7 +641,7 @@ static void _slide_widget_delete_cb(lv_event_t *e)
     {
         if (lv_obj_is_valid(sw->touch_obj))
         {
-            lv_obj_del(sw->touch_obj);
+            lv_obj_delete(sw->touch_obj);
         }
         sw->touch_obj = NULL;
     }
@@ -666,7 +666,7 @@ void eos_slide_widget_delete(eos_slide_widget_t *sw)
             lv_obj_remove_event_cb(sw->touch_obj, _touch_obj_pressed_cb);
             lv_obj_remove_event_cb(sw->touch_obj, _touch_obj_pressing_cb);
             lv_obj_remove_event_cb(sw->touch_obj, _touch_obj_released_cb);
-            lv_obj_del(sw->touch_obj);
+            lv_obj_delete(sw->touch_obj);
         }
         sw->touch_obj = NULL;
     }

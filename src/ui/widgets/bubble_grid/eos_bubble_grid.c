@@ -449,7 +449,7 @@ static void clear_icon_list(eos_bubble_grid_t * wb)
     while(node != NULL) {
         icon_node_t * next = lv_ll_get_next(&wb->icon_ll, node);
         if(node->bubble_obj != NULL) {
-            lv_obj_del(node->bubble_obj);
+            lv_obj_delete(node->bubble_obj);
             node->bubble_obj = NULL;
             node->image_obj = NULL;
         }
@@ -1292,7 +1292,7 @@ lv_obj_t * eos_bubble_create(lv_obj_t * parent)
 
     eos_bubble_grid_t * wb = lv_malloc(sizeof(eos_bubble_grid_t));
     if(wb == NULL) {
-        lv_obj_del(container);
+        lv_obj_delete(container);
         return NULL;
     }
 
