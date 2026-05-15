@@ -17,18 +17,26 @@ extern "C" {
 /* Includes ---------------------------------------------------*/
 #include <stdint.h>
 #include <stdbool.h>
+#include "lvgl.h"
 
 /* Public typedefs --------------------------------------------*/
 
 /**
  * @brief Overlay descriptor for registration with the chrome manager
+ *
+ * Each overlay provides lifecycle callbacks and optional query interfaces.
+ * The chrome manager uses these to provide unified Z-order management,
+ * crown scrollable target resolution, and focus handling.
  */
-typedef struct {
-    bool (*is_open)(void);      /**< Check if this overlay is currently open */
+typedef struct eos_chrome_overlay_t {
     void (*pull_back)(void);    /**< Pull back (close with animation) this overlay */
     void (*hide)(void);         /**< Hide this overlay immediately (no animation) */
-    void (*on_hidden)(void);    /**< Called when overlay is hidden (for stack sync) */
-    const char *name;           /**< Debug name for logging */
+    void (*on_focus)(void);     /**< Called when overlay becomes top of stack */
+
+    bool (*is_open)(void);      /**< Check if this overlay is currently open (optional, can be NULL) */
+    lv_obj_t *(*get_scrollable)(void);  /**< Get the scrollable object for crown input (optional, can be NULL) */
+    lv_obj_t *(*get_foreground_obj)(void);  /**< Get the object to bring to front for Z-order (optional, can be NULL) */
+    const char *name;           /**< Debug name for logging (optional, can be NULL) */
 } eos_chrome_overlay_t;
 
 /* Public function prototypes --------------------------------*/
@@ -69,9 +77,15 @@ void eos_chrome_manager_pull_back_all(void);
 
 /**
  * @brief Notify chrome manager that an overlay has been opened
- * @param name Name of the overlay (must match registered name)
+ * @param overlay Overlay descriptor pointer
  */
-void eos_chrome_manager_notify_overlay_opened(const char *name);
+void eos_chrome_manager_notify_overlay_opened(const eos_chrome_overlay_t *overlay);
+
+/**
+ * @brief Notify chrome manager that an overlay has been closed
+ * @param overlay Overlay descriptor pointer
+ */
+void eos_chrome_manager_notify_overlay_closed(const eos_chrome_overlay_t *overlay);
 
 /**
  * @brief Push an overlay to the stack (called when overlay opens)

@@ -54,6 +54,21 @@ typedef struct
 /* Variables --------------------------------------------------*/
 static detail_page_data_t *_detail_data = NULL;
 static eos_msg_list_t *message_list_instance = NULL;
+static void _msg_list_overlay_pull_back(void);
+static void _msg_list_overlay_hide(void);
+static void _msg_list_overlay_on_focus(void);
+static bool _msg_list_overlay_is_open(void);
+static lv_obj_t *_msg_list_overlay_get_scrollable(void);
+static lv_obj_t *_msg_list_overlay_get_foreground_obj(void);
+static const eos_chrome_overlay_t _msg_list_overlay = {
+    .pull_back = _msg_list_overlay_pull_back,
+    .hide = _msg_list_overlay_hide,
+    .on_focus = _msg_list_overlay_on_focus,
+    .is_open = _msg_list_overlay_is_open,
+    .get_scrollable = _msg_list_overlay_get_scrollable,
+    .get_foreground_obj = _msg_list_overlay_get_foreground_obj,
+    .name = "msg_list",
+};
 /* Function Implementations -----------------------------------*/
 
 static void _msg_list_item_clicked_cb(lv_event_t *e);
@@ -225,7 +240,7 @@ static void _mark_as_read_btn_click_cb(lv_event_t *e)
 static void _msg_list_item_clicked_cb(lv_event_t *e)
 {
     eos_slide_widget_t *sw = (eos_slide_widget_t *)lv_event_get_param(e);
-    if (abs(sw->last_touch_displacement) > _ITEM_CLICK_THRESHOLD)
+    if (abs(eos_slide_widget_get_displacement(sw)) > _ITEM_CLICK_THRESHOLD)
         return;
 
     lv_obj_t *item_container = lv_event_get_current_target(e);
@@ -638,7 +653,64 @@ static void _slide_widget_reached_threshold_cb(lv_event_t *e)
 static void _msg_list_opened_cb(lv_event_t *e)
 {
     EOS_LOG_I("Message list opened");
-    eos_chrome_manager_notify_overlay_opened("msg_list");
+    eos_chrome_manager_notify_overlay_opened(&_msg_list_overlay);
+}
+
+static void _msg_list_closed_cb(lv_event_t *e)
+{
+    EOS_LOG_I("Message list closed");
+    eos_chrome_manager_notify_overlay_closed(&_msg_list_overlay);
+}
+
+static void _msg_list_overlay_pull_back(void)
+{
+    eos_msg_list_close_detail();
+    eos_msg_list_t *msg_list = eos_msg_list_get_instance();
+    if (msg_list && msg_list->swipe_panel)
+    {
+        eos_swipe_panel_pull_back(msg_list->swipe_panel);
+    }
+}
+
+static void _msg_list_overlay_hide(void)
+{
+    eos_msg_list_close_detail();
+    eos_msg_list_hide();
+}
+
+static void _msg_list_overlay_on_focus(void)
+{
+    EOS_LOG_D("Msg list focused");
+}
+
+static bool _msg_list_overlay_is_open(void)
+{
+    eos_msg_list_t *msg_list = eos_msg_list_get_instance();
+    if (msg_list && msg_list->swipe_panel && msg_list->swipe_panel->sw)
+    {
+        return eos_slide_widget_get_state(msg_list->swipe_panel->sw) == EOS_SLIDE_WIDGET_STATE_OPEN;
+    }
+    return false;
+}
+
+static lv_obj_t *_msg_list_overlay_get_scrollable(void)
+{
+    eos_msg_list_t *msg_list = eos_msg_list_get_instance();
+    if (msg_list && msg_list->list)
+    {
+        return msg_list->list;
+    }
+    return NULL;
+}
+
+static lv_obj_t *_msg_list_overlay_get_foreground_obj(void)
+{
+    eos_msg_list_t *msg_list = eos_msg_list_get_instance();
+    if (msg_list && msg_list->swipe_panel && msg_list->swipe_panel->sw)
+    {
+        return eos_slide_widget_get_touch_obj(msg_list->swipe_panel->sw);
+    }
+    return NULL;
 }
 
 eos_msg_list_t *eos_msg_list_create(lv_obj_t *parent)
@@ -654,6 +726,7 @@ eos_msg_list_t *eos_msg_list_create(lv_obj_t *parent)
     eos_crown_encoder_register_slide_widget(msg_list->swipe_panel->sw);
     eos_slide_widget_add_event_cb_reached_threshold(msg_list->swipe_panel->sw, _slide_widget_reached_threshold_cb, NULL);
     eos_slide_widget_add_event_cb_opened(msg_list->swipe_panel->sw, _msg_list_opened_cb, NULL);
+    eos_slide_widget_add_event_cb_closed(msg_list->swipe_panel->sw, _msg_list_closed_cb, NULL);
 
     msg_list->list = lv_list_create(msg_list->swipe_panel->swipe_obj);
     EOS_CHECK_PTR_RETURN_VAL_FREE(msg_list->list, NULL, msg_list);
@@ -739,4 +812,9 @@ eos_msg_list_t *eos_msg_list_get_instance(void)
 void eos_msg_list_init(void)
 {
     message_list_instance = eos_msg_list_create(lv_layer_top());
+}
+
+const eos_chrome_overlay_t *eos_msg_list_get_overlay_descriptor(void)
+{
+    return &_msg_list_overlay;
 }

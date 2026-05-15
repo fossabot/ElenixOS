@@ -183,7 +183,7 @@ lv_obj_t *eos_toast_show(const char *icon_src, const char *message)
 {
     lv_obj_t *toast = _toast_create_container();
 
-    // 创建 icon
+    // Create icon
     lv_obj_t *icon = lv_image_create(toast);
     lv_image_set_src(icon, icon_src);
     eos_img_set_size(icon, _ICON_WIDTH, _ICON_HEIGHT);

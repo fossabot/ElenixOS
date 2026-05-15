@@ -334,9 +334,10 @@ static void _slide_widget_state_changed_cb(lv_event_t *e)
 static void _slide_widget_state_changed_async_cb(void *user_data)
 {
     eos_slide_widget_t *sw = (eos_slide_widget_t *)user_data;
-    if (sw && sw->state == EOS_SLIDE_WIDGET_STATE_OPEN && sw->target_obj && lv_obj_is_valid(sw->target_obj))
+    lv_obj_t *target_obj = eos_slide_widget_get_target_obj(sw);
+    if (sw && eos_slide_widget_get_state(sw) == EOS_SLIDE_WIDGET_STATE_OPEN && target_obj && lv_obj_is_valid(target_obj))
     {
-        lv_obj_t *target = _find_scrollable_obj(sw->target_obj);
+        lv_obj_t *target = _find_scrollable_obj(target_obj);
         if (target)
         {
             eos_crown_encoder_set_target_obj(target);
@@ -526,20 +527,15 @@ void eos_crown_encoder_set_target_view(lv_obj_t *view)
 
 void eos_crown_encoder_activate_current_overlay_scrollable(void)
 {
-    eos_control_center_t *cc = eos_control_center_get_instance();
-    if (cc && cc->swipe_panel && _obj_is_visible_for_crown(cc->swipe_panel->swipe_obj) &&
-        cc->container && _obj_is_visible_for_crown(cc->container))
+    const eos_chrome_overlay_t *top = eos_chrome_manager_get_top_overlay();
+    if (top && top->get_scrollable)
     {
-        eos_crown_encoder_set_target_obj(cc->container);
-        return;
-    }
-
-    eos_msg_list_t *msg_list = eos_msg_list_get_instance();
-    if (msg_list && msg_list->swipe_panel && _obj_is_visible_for_crown(msg_list->swipe_panel->swipe_obj) &&
-        msg_list->list && _obj_is_visible_for_crown(msg_list->list))
-    {
-        eos_crown_encoder_set_target_obj(msg_list->list);
-        return;
+        lv_obj_t *scrollable = top->get_scrollable();
+        if (scrollable && _obj_is_visible_for_crown(scrollable))
+        {
+            eos_crown_encoder_set_target_obj(scrollable);
+            return;
+        }
     }
 
     eos_crown_encoder_set_target_view(eos_view_active());

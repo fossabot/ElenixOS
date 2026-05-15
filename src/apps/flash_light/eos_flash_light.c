@@ -47,9 +47,6 @@ typedef struct
     lv_obj_t *mask;
 } _pressing_user_data_t;
 
-/* Static variables for overlay management */
-static _pressing_user_data_t *_flash_light_ud = NULL;
-
 typedef struct
 {
     eos_activity_t *activity;
@@ -63,10 +60,21 @@ typedef struct
 } _flash_light_card_pager_ctx_t;
 /* Variables --------------------------------------------------*/
 
+static _pressing_user_data_t *_flash_light_ud = NULL;
+static void _flash_light_overlay_pull_back(void);
+static void _flash_light_overlay_hide(void);
+static void _flash_light_overlay_on_focus(void);
+static const eos_chrome_overlay_t _flash_light_overlay = {
+    .pull_back = _flash_light_overlay_pull_back,
+    .hide = _flash_light_overlay_hide,
+    .on_focus = _flash_light_overlay_on_focus,
+};
+
 /* Function Implementations -----------------------------------*/
 static void _flash_light_on_destroy(eos_activity_t *a);
 static inline void _flash_light_delete(_pressing_user_data_t *ud);
 static void _flash_light_card_pager_timer_cb(lv_timer_t *timer);
+lv_obj_t *eos_flash_light_get_touch_obj(void);
 static void _flash_light_card_pager_page_changed_cb(eos_card_pager_t *cp,
                                                     uint8_t current_page_index,
                                                     void *user_data);
@@ -150,13 +158,36 @@ static void _swipe_panel_pull_back_cb(lv_event_t *e)
     _pressing_user_data_t *ud = lv_event_get_user_data(e);
     EOS_CHECK_PTR_RETURN(ud);
 
-    /* Use final position after slide DONE as cleanup fallback,
-     * because threshold event may be skipped in some edge drags. */
     int32_t swipe_obj_coord_y = lv_obj_get_y(ud->sp->swipe_obj);
     if (swipe_obj_coord_y >= EOS_DISPLAY_HEIGHT)
     {
         _flash_light_delete(ud);
         eos_display_restore(_BRIGHTNESS_DURATION);
+    }
+}
+
+static void _flash_light_closed_cb(lv_event_t *e)
+{
+    EOS_LOG_I("Flash light closed");
+    eos_chrome_manager_notify_overlay_closed(&_flash_light_overlay);
+}
+
+static void _flash_light_overlay_pull_back(void)
+{
+    eos_flash_light_pull_back();
+}
+
+static void _flash_light_overlay_hide(void)
+{
+    eos_flash_light_hide();
+}
+
+static void _flash_light_overlay_on_focus(void)
+{
+    lv_obj_t *touch_obj = eos_flash_light_get_touch_obj();
+    if (touch_obj)
+    {
+        lv_obj_move_foreground(touch_obj);
     }
 }
 
@@ -249,10 +280,9 @@ static void _flash_light_card_pager_clicked_cb(lv_event_t *e)
     _flash_light_card_pager_ctx_t *ctx = lv_event_get_user_data(e);
     EOS_CHECK_PTR_RETURN(ctx && ctx->cp);
 
-    // Separate swipe from tap: large displacement should not toggle immersive mode.
-    if (ctx->cp->sw1)
+    if (ctx->cp->sw)
     {
-        lv_coord_t disp = ctx->cp->sw1->last_touch_displacement;
+        lv_coord_t disp = eos_slide_widget_get_displacement(ctx->cp->sw);
         if (abs(disp) > _IMMERSIVE_TAP_MAX_DISPLACEMENT)
             return;
     }
@@ -404,7 +434,6 @@ void eos_flash_light_show(void)
     eos_swipe_panel_t *sp = eos_swipe_panel_create(layer_top);
     eos_swipe_panel_set_dir(sp, EOS_SWIPE_DIR_UP);
     eos_swipe_panel_slide_down(sp);
-    eos_slide_widget_reverse(sp->sw);
     eos_swipe_panel_hide_handle_bar(sp);
     lv_obj_set_style_bg_opa(sp->swipe_obj, LV_OPA_TRANSP, 0);
 
@@ -412,8 +441,9 @@ void eos_flash_light_show(void)
 
     eos_slide_widget_add_event_cb_done(sp->sw, _swipe_panel_pull_back_cb, ud);
     eos_slide_widget_add_event_cb_moving(sp->sw, _swipe_panel_moving_cb, ud);
+    eos_slide_widget_add_event_cb_closed(sp->sw, _flash_light_closed_cb, NULL);
     int32_t touch_area_height = EOS_DISPLAY_HEIGHT * 0.2;
-    lv_obj_set_height(sp->sw->touch_obj, touch_area_height);
+    lv_obj_set_height(eos_slide_widget_get_touch_obj(sp->sw), touch_area_height);
 
     lv_obj_t *container = sp->swipe_obj;
     lv_obj_set_height(container, 2 * EOS_DISPLAY_HEIGHT);
@@ -449,14 +479,21 @@ void eos_flash_light_show(void)
 
     _flash_light_ud = ud;
     eos_display_set_brightness(EOS_DISPLAY_BRIGHTNESS_MAX, _BRIGHTNESS_DURATION, true);
-    eos_chrome_manager_notify_overlay_opened("flash_light");
+    eos_chrome_manager_notify_overlay_opened(&_flash_light_overlay);
 }
 
 bool eos_flash_light_is_open(void)
 {
     if (!_flash_light_ud || !_flash_light_ud->sp || !_flash_light_ud->sp->sw)
         return false;
-    return _flash_light_ud->sp->sw->state == EOS_SLIDE_WIDGET_STATE_OPEN;
+    return eos_slide_widget_get_state(_flash_light_ud->sp->sw) == EOS_SLIDE_WIDGET_STATE_OPEN;
+}
+
+lv_obj_t *eos_flash_light_get_touch_obj(void)
+{
+    if (!_flash_light_ud || !_flash_light_ud->sp || !_flash_light_ud->sp->sw)
+        return NULL;
+    return eos_slide_widget_get_touch_obj(_flash_light_ud->sp->sw);
 }
 
 void eos_flash_light_pull_back(void)
@@ -473,6 +510,11 @@ void eos_flash_light_hide(void)
     {
         _flash_light_delete(_flash_light_ud);
     }
+}
+
+const eos_chrome_overlay_t *eos_flash_light_get_overlay_descriptor(void)
+{
+    return &_flash_light_overlay;
 }
 
 void eos_flash_light_enter(void)
@@ -530,9 +572,10 @@ void eos_flash_light_enter(void)
 
         eos_card_pager_set_page_changed_cb(cp, _flash_light_card_pager_page_changed_cb, ctx);
 
-        if (cp->sw1 && cp->sw1->touch_obj)
+        lv_obj_t *sw1_touch_obj = eos_slide_widget_get_touch_obj(cp->sw);
+        if (sw1_touch_obj)
         {
-            lv_obj_add_event_cb(cp->sw1->touch_obj,
+            lv_obj_add_event_cb(sw1_touch_obj,
                                 _flash_light_card_pager_clicked_cb,
                                 LV_EVENT_CLICKED,
                                 ctx);

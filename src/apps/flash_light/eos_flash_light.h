@@ -14,6 +14,7 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 #include "lvgl.h"
+#include "eos_chrome_manager.h"
 
 /* Public macros ----------------------------------------------*/
 
@@ -45,6 +46,7 @@ void eos_flash_light_pull_back(void);
  * @brief Hide the flashlight overlay immediately (no animation).
  */
 void eos_flash_light_hide(void);
+const eos_chrome_overlay_t *eos_flash_light_get_overlay_descriptor(void);
 
 #ifdef __cplusplus
 }

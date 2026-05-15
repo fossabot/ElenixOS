@@ -1,6 +1,9 @@
 /**
  * @file eos_slide_widget.h
- * @brief Slide widget
+ * @brief Slide widget - A reusable sliding gesture controller
+ *
+ * This widget handles touch gestures and animates target objects accordingly.
+ * It supports both vertical and horizontal sliding with configurable thresholds.
  */
 
 #ifndef EOS_SLIDE_WIDGET_H
@@ -52,26 +55,20 @@ typedef enum
     EOS_SLIDE_WIDGET_STATE_OPEN,      /**< Panel fully open */
 } eos_slide_widget_state_t;
 
+/**
+ * @brief Slide widget configuration structure
+ */
 typedef struct
 {
-    lv_obj_t *touch_obj;
-    lv_obj_t *target_obj;
-    eos_slide_widget_dir_t dir;
-    lv_coord_t base;   /**< Base point: default position of target object */
-    lv_coord_t target; /**< Target point: final position for target object to move to */
-    lv_coord_t touch_obj_base;
-    lv_coord_t touch_obj_target;
-    eos_threshold_t threshold; /**< Threshold: trigger when (current - base)/(target - base) > threshold */
-    eos_slide_widget_state_t state;
-    eos_slide_widget_state_t settle_state; /**< Settling state after current animation completes */
-    lv_coord_t _indev_start;            /**< Touch start point */
-    lv_coord_t _target_start;           /**< Target object position at press time */
-    lv_coord_t last_touch_displacement; /**< Previous movement displacement */
-    bool bidirectional;                 /**< Whether to support bidirectional sliding */
-    bool move_foreground_on_pressed;    /**< Whether to move to foreground when pressed, default on, auto off when parent is `lv_list_class` */
-    bool reversed;      /**< Whether to reverse direction */
-    bool owns_touch_obj; /**< Whether owns and is responsible for releasing touch_obj */
-} eos_slide_widget_t;
+    lv_coord_t target_base;       /**< Base position for target object */
+    lv_coord_t target_target;     /**< Target position for target object */
+    lv_coord_t touch_base;        /**< Base position for touch object (auto-sync) */
+    lv_coord_t touch_target;      /**< Target position for touch object (auto-sync) */
+    eos_threshold_t threshold;    /**< Threshold for triggering slide */
+    bool sync_touch_obj;          /**< Whether to auto-sync touch object position */
+} eos_slide_widget_config_t;
+
+typedef struct eos_slide_widget_t eos_slide_widget_t;
 
 /* Public function prototypes --------------------------------*/
 
@@ -81,19 +78,8 @@ typedef struct
  */
 void eos_slide_widget_init(void);
 
-/**
- * @brief Move from start position to end position
- * @param sw Target slide widget
- * @param start Start coordinate
- * @param end End coordinate
- * @param duration Duration, set to 0 for no animation
- */
-void eos_slide_widget_move(eos_slide_widget_t *sw, lv_coord_t start, lv_coord_t end, uint32_t duration);
-/**
- * @brief Reverse the `target` and `base` positions of the target object
- * @param sw Target slide widget
- */
-void eos_slide_widget_reverse(eos_slide_widget_t *sw);
+/*============================ Creation & Deletion ============================*/
+
 /**
  * @brief Create slide widget
  * @param parent        Parent object of the touch object
@@ -113,6 +99,7 @@ eos_slide_widget_t *eos_slide_widget_create(
     eos_slide_widget_dir_t dir,
     lv_coord_t target,
     eos_threshold_t threshold);
+
 /**
  * @brief Create slide widget (without creating touch object internally)
  * @param touch_obj Touch object
@@ -123,15 +110,174 @@ eos_slide_widget_t *eos_slide_widget_create_with_touch(
     eos_slide_widget_dir_t dir,
     lv_coord_t target,
     eos_threshold_t threshold);
+
+/**
+ * @brief Delete slide widget
+ * @param sw Slide widget to delete
+ */
+void eos_slide_widget_delete(eos_slide_widget_t *sw);
+
+/*============================ Configuration ============================*/
+
+/**
+ * @brief Configure slide widget with a configuration structure
+ * @param sw Slide widget
+ * @param config Configuration structure pointer
+ */
+void eos_slide_widget_configure(eos_slide_widget_t *sw, const eos_slide_widget_config_t *config);
+
+/**
+ * @brief Set the target object for slide widget
+ * @param sw Slide widget
+ * @param target_obj New target object
+ */
+void eos_slide_widget_set_target_obj(eos_slide_widget_t *sw, lv_obj_t *target_obj);
+
+/**
+ * @brief Set the slide range for target object
+ * @param sw Slide widget
+ * @param base Base position (starting point)
+ * @param target Target position (ending point)
+ */
+void eos_slide_widget_set_range(eos_slide_widget_t *sw, lv_coord_t base, lv_coord_t target);
+
+/**
+ * @brief Set the position range for touch object (for auto-sync)
+ * @param sw Slide widget
+ * @param base Base position for touch object
+ * @param target Target position for touch object
+ * @note When set, touch object position will be automatically synced during animation
+ */
+void eos_slide_widget_set_touch_range(eos_slide_widget_t *sw, lv_coord_t base, lv_coord_t target);
+
+/**
+ * @brief Enable or disable touch object position sync
+ * @param sw Slide widget
+ * @param enable true to enable auto-sync, false to disable
+ */
+void eos_slide_widget_set_sync_touch_obj(eos_slide_widget_t *sw, bool enable);
+
+/**
+ * @brief Set threshold for slide trigger
+ * @param sw Slide widget
+ * @param threshold Threshold value (0~255), use EOS_THRESHOLD_XXX macros
+ */
+void eos_slide_widget_set_threshold(eos_slide_widget_t *sw, eos_threshold_t threshold);
+
 /**
  * @brief Set whether to support bidirectional sliding
+ * @param sw Slide widget
+ * @param enable true to enable bidirectional sliding
  */
 void eos_slide_widget_set_bidirectional(eos_slide_widget_t *sw, bool enable);
+
+/**
+ * @brief Set whether to move to foreground when pressed
+ * @param sw Slide widget
+ * @param enable true to move to foreground on press
+ */
 void eos_slide_widget_set_move_foreground_on_pressed(eos_slide_widget_t *sw, bool enable);
+
+/**
+ * @brief Set animation transition states
+ * @param sw Slide widget
+ * @param transit_state Transition state during animation
+ * @param settle_state Final state after animation completes
+ */
 void eos_slide_widget_set_anim_transition(eos_slide_widget_t *sw,
                                           eos_slide_widget_state_t transit_state,
                                           eos_slide_widget_state_t settle_state);
-void eos_slide_widget_delete(eos_slide_widget_t *sw);
+
+/*============================ State Query ============================*/
+
+/**
+ * @brief Get current state of slide widget
+ * @param sw Slide widget
+ * @return Current state
+ */
+eos_slide_widget_state_t eos_slide_widget_get_state(eos_slide_widget_t *sw);
+
+/**
+ * @brief Get last touch displacement
+ * @param sw Slide widget
+ * @return Last touch displacement value
+ */
+lv_coord_t eos_slide_widget_get_displacement(eos_slide_widget_t *sw);
+
+/**
+ * @brief Get current position of target object
+ * @param sw Slide widget
+ * @return Current position
+ */
+lv_coord_t eos_slide_widget_get_current_pos(eos_slide_widget_t *sw);
+
+/**
+ * @brief Get base position
+ * @param sw Slide widget
+ * @return Base position
+ */
+lv_coord_t eos_slide_widget_get_base(eos_slide_widget_t *sw);
+
+/**
+ * @brief Get target position
+ * @param sw Slide widget
+ * @return Target position
+ */
+lv_coord_t eos_slide_widget_get_target(eos_slide_widget_t *sw);
+
+/**
+ * @brief Check if slide widget is reversed
+ * @param sw Slide widget
+ * @return true if reversed, false otherwise
+ */
+bool eos_slide_widget_is_reversed(eos_slide_widget_t *sw);
+
+/**
+ * @brief Get touch object
+ * @param sw Slide widget
+ * @return Touch object pointer
+ */
+lv_obj_t *eos_slide_widget_get_touch_obj(eos_slide_widget_t *sw);
+
+/**
+ * @brief Get target object
+ * @param sw Slide widget
+ * @return Target object pointer
+ */
+lv_obj_t *eos_slide_widget_get_target_obj(eos_slide_widget_t *sw);
+
+/**
+ * @brief Get slide direction
+ * @param sw Slide widget
+ * @return Slide direction
+ */
+eos_slide_widget_dir_t eos_slide_widget_get_dir(eos_slide_widget_t *sw);
+
+/*============================ Actions ============================*/
+
+/**
+ * @brief Move from start position to end position
+ * @param sw Target slide widget
+ * @param start Start coordinate
+ * @param end End coordinate
+ * @param duration Duration, set to 0 for no animation
+ */
+void eos_slide_widget_move(eos_slide_widget_t *sw, lv_coord_t start, lv_coord_t end, uint32_t duration);
+
+/**
+ * @brief Reverse the `target` and `base` positions of the target object
+ * @param sw Target slide widget
+ */
+void eos_slide_widget_reverse(eos_slide_widget_t *sw);
+
+/**
+ * @brief Sync touch object position based on current target object position
+ * @param sw Slide widget
+ * @note This is automatically called during animation if sync_touch_obj is enabled
+ */
+void eos_slide_widget_sync_touch_obj(eos_slide_widget_t *sw);
+
+/*============================ Event Callbacks ============================*/
 
 /**
  * @brief Register callback for slide widget events

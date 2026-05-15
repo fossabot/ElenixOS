@@ -14,6 +14,7 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 #include "lvgl.h"
+#include "eos_chrome_manager.h"
 #include "eos_swipe_panel.h"
 /* Public macros ----------------------------------------------*/
 
@@ -54,6 +55,7 @@ eos_control_center_t *eos_control_center_get_instance(void);
  * @brief Initialize control center, create a control center instance
  */
 void eos_control_center_init(void);
+const eos_chrome_overlay_t *eos_control_center_get_overlay_descriptor(void);
 #ifdef __cplusplus
 }
 #endif

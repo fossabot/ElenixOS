@@ -14,6 +14,7 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 #include "lvgl.h"
+#include "eos_chrome_manager.h"
 #include "eos_swipe_panel.h"
 /* Public macros ----------------------------------------------*/
 
@@ -126,6 +127,7 @@ void eos_msg_list_show(void);
  * @brief Hide message list
  */
 void eos_msg_list_hide(void);
+const eos_chrome_overlay_t *eos_msg_list_get_overlay_descriptor(void);
 #ifdef __cplusplus
 }
 #endif

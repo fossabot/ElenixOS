@@ -38,6 +38,21 @@
 #define _LIST_SCALE_THRESHOLD_Y ((float)EOS_DISPLAY_HEIGHT * 0.8)
 /* Variables --------------------------------------------------*/
 static eos_control_center_t *control_center_instance = NULL;
+static void _control_center_overlay_pull_back(void);
+static void _control_center_overlay_hide(void);
+static void _control_center_overlay_on_focus(void);
+static bool _control_center_overlay_is_open(void);
+static lv_obj_t *_control_center_overlay_get_scrollable(void);
+static lv_obj_t *_control_center_overlay_get_foreground_obj(void);
+static const eos_chrome_overlay_t _control_center_overlay = {
+    .pull_back = _control_center_overlay_pull_back,
+    .hide = _control_center_overlay_hide,
+    .on_focus = _control_center_overlay_on_focus,
+    .is_open = _control_center_overlay_is_open,
+    .get_scrollable = _control_center_overlay_get_scrollable,
+    .get_foreground_obj = _control_center_overlay_get_foreground_obj,
+    .name = "control_center",
+};
 /* Function Implementations -----------------------------------*/
 void eos_control_panel_slide_change(void);
 
@@ -402,7 +417,62 @@ static void _control_center_settings_entry_cb(lv_event_t *e)
 static void _control_center_opened_cb(lv_event_t *e)
 {
     EOS_LOG_I("Control center opened");
-    eos_chrome_manager_notify_overlay_opened("control_center");
+    eos_chrome_manager_notify_overlay_opened(&_control_center_overlay);
+}
+
+static void _control_center_closed_cb(lv_event_t *e)
+{
+    EOS_LOG_I("Control center closed");
+    eos_chrome_manager_notify_overlay_closed(&_control_center_overlay);
+}
+
+static void _control_center_overlay_pull_back(void)
+{
+    eos_control_center_t *cc = eos_control_center_get_instance();
+    if (cc && cc->swipe_panel)
+    {
+        eos_swipe_panel_pull_back(cc->swipe_panel);
+    }
+}
+
+static void _control_center_overlay_hide(void)
+{
+    eos_control_center_hide();
+}
+
+static void _control_center_overlay_on_focus(void)
+{
+    EOS_LOG_D("Control center focused");
+}
+
+static bool _control_center_overlay_is_open(void)
+{
+    eos_control_center_t *cc = eos_control_center_get_instance();
+    if (cc && cc->swipe_panel && cc->swipe_panel->sw)
+    {
+        return eos_slide_widget_get_state(cc->swipe_panel->sw) == EOS_SLIDE_WIDGET_STATE_OPEN;
+    }
+    return false;
+}
+
+static lv_obj_t *_control_center_overlay_get_scrollable(void)
+{
+    eos_control_center_t *cc = eos_control_center_get_instance();
+    if (cc && cc->container)
+    {
+        return cc->container;
+    }
+    return NULL;
+}
+
+static lv_obj_t *_control_center_overlay_get_foreground_obj(void)
+{
+    eos_control_center_t *cc = eos_control_center_get_instance();
+    if (cc && cc->swipe_panel && cc->swipe_panel->sw)
+    {
+        return eos_slide_widget_get_touch_obj(cc->swipe_panel->sw);
+    }
+    return NULL;
 }
 
 /************************** Control center **************************/
@@ -418,6 +488,7 @@ eos_control_center_t *eos_control_center_create(lv_obj_t *parent)
     eos_swipe_panel_show_handle_bar(swipe_panel);
 
     eos_slide_widget_add_event_cb_opened(swipe_panel->sw, _control_center_opened_cb, NULL);
+    eos_slide_widget_add_event_cb_closed(swipe_panel->sw, _control_center_closed_cb, NULL);
 
     cc->swipe_panel = swipe_panel;
 
@@ -499,9 +570,9 @@ void eos_control_panel_slide_change(void)
 {
     EOS_CHECK_PTR_RETURN(control_center_instance);
     eos_swipe_panel_t *sp = control_center_instance->swipe_panel;
-    if (sp->sw->state == EOS_SLIDE_WIDGET_STATE_OPEN)
+    if (eos_slide_widget_get_state(sp->sw) == EOS_SLIDE_WIDGET_STATE_OPEN)
     {
-        eos_swipe_panel_slide_up(sp);
+        eos_swipe_panel_pull_back(sp);
     }
     else
     {
@@ -512,7 +583,7 @@ void eos_control_panel_slide_change(void)
 void eos_control_center_show(void)
 {
     EOS_CHECK_PTR_RETURN(control_center_instance);
-    lv_obj_remove_flag(control_center_instance->swipe_panel->sw->touch_obj, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(eos_slide_widget_get_touch_obj(control_center_instance->swipe_panel->sw), LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(control_center_instance->swipe_panel->swipe_obj, LV_OBJ_FLAG_HIDDEN);
     eos_crown_encoder_activate_current_overlay_scrollable();
 }
@@ -520,7 +591,7 @@ void eos_control_center_show(void)
 void eos_control_center_hide(void)
 {
     EOS_CHECK_PTR_RETURN(control_center_instance);
-    lv_obj_add_flag(control_center_instance->swipe_panel->sw->touch_obj, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(eos_slide_widget_get_touch_obj(control_center_instance->swipe_panel->sw), LV_OBJ_FLAG_HIDDEN);
     if (lv_obj_get_y(control_center_instance->swipe_panel->swipe_obj) < EOS_DISPLAY_HEIGHT)
         lv_obj_add_flag(control_center_instance->swipe_panel->swipe_obj, LV_OBJ_FLAG_HIDDEN);
     eos_crown_encoder_activate_current_overlay_scrollable();
@@ -563,4 +634,9 @@ void eos_control_center_init(void)
 {
     control_center_instance = eos_control_center_create(lv_layer_top());
     eos_event_subscribe(EOS_EVENT_SYSTEM_CONFIG_UPDATE, _system_config_update_event_cb, NULL);
+}
+
+const eos_chrome_overlay_t *eos_control_center_get_overlay_descriptor(void)
+{
+    return &_control_center_overlay;
 }

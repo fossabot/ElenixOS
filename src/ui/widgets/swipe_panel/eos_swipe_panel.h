@@ -26,7 +26,8 @@ typedef enum{
     EOS_SWIPE_DIR_UP=0,      // Slide up to reveal swipe_obj
     EOS_SWIPE_DIR_DOWN=1,    // Slide down to reveal swipe_obj
     EOS_SWIPE_DIR_LEFT=2,    // Slide left to reveal swipe_obj
-    EOS_SWIPE_DIR_RIGHT=3   // Slide right to reveal swipe_obj
+    EOS_SWIPE_DIR_RIGHT=3,   // Slide right to reveal swipe_obj
+    EOS_SWIPE_DIR_COUNT      // Total number of directions
 } eos_swipe_dir_t;
 /**
  * @brief SwipePanel structure definition
@@ -44,11 +45,6 @@ typedef struct {
  * @param sp Target swipe panel
  */
 void eos_swipe_panel_slide_down(eos_swipe_panel_t *sp);
-/**
- * @brief Slide the swipe panel out of screen
- * @param sp Target swipe panel
- */
-void eos_swipe_panel_slide_up(eos_swipe_panel_t *sp);
 /**
  * @brief Delete SwipePanel
  * @param swipe_panel Swipe panel

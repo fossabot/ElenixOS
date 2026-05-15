@@ -57,8 +57,7 @@ struct eos_card_pager_t
     eos_card_pager_node_t *page_list_head;
     uint8_t current_page_index;
     uint8_t page_count;
-    eos_slide_widget_t *sw1;
-    eos_slide_widget_t *sw2;
+    eos_slide_widget_t *sw;
     eos_card_pager_dir_t dir;
     bool loop;
     eos_card_pager_page_changed_cb_t page_changed_cb;
