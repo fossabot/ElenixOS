@@ -20,7 +20,7 @@
 #include "eos_image.h"
 #include "eos_port.h"
 #include "eos_anim.h"
-#include "script_engine_core.h"
+#include "script_engine_manager.h"
 #include "eos_service_config.h"
 #include "eos_event.h"
 #include "eos_lang.h"
@@ -142,6 +142,9 @@ static uint32_t _app_list_icon_count = 0;
 
 static void _app_on_destroy(eos_activity_t *a)
 {
+    // Stop the app script (if any) before destroying context
+    script_engine_app_stop();
+
     app_launch_ctx_t *ctx = eos_activity_get_user_data(a);
     if (ctx)
     {
@@ -151,8 +154,6 @@ static void _app_on_destroy(eos_activity_t *a)
         eos_activity_set_user_data(a, NULL);
     }
 
-    // Exit script engine
-    script_engine_request_stop();
 }
 
 static void _app_on_enter(eos_activity_t *a)
@@ -163,7 +164,7 @@ static void _app_on_enter(eos_activity_t *a)
     lv_obj_t *app_view = eos_activity_get_view(a);
     EOS_CHECK_PTR_RETURN(app_view);
 
-    script_engine_result_t ret = script_engine_run(&ctx->pkg);
+    script_engine_result_t ret = script_engine_app_run(&ctx->pkg);
     if (ret != SE_OK)
     {
         // Determine error type based on error code
@@ -381,18 +382,6 @@ eos_result_t eos_app_launch_immediately(const char *app_id)
         _app_list_pop_to_app_list();
     }
 
-    script_state_t state = script_engine_get_state();
-    if (state == SCRIPT_STATE_RUNNING ||
-        state == SCRIPT_STATE_SUSPEND ||
-        state == SCRIPT_STATE_ERROR)
-    {
-        script_engine_result_t stop_ret = script_engine_request_stop();
-        if (stop_ret != SE_OK && script_engine_get_state() != SCRIPT_STATE_STOPPED)
-        {
-            EOS_LOG_E("Failed to stop current script before launching app: %d", stop_ret);
-            return EOS_FAILED;
-        }
-    }
 
     return _app_list_launch_script_app(app_id);
 }

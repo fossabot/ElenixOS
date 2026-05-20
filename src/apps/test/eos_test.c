@@ -27,7 +27,7 @@
 #include "eos_app.h"
 #include "eos_app_list.h"
 #include "eos_core.h"
-#include "script_engine_core.h"
+#include "script_engine_manager.h"
 #include "eos_pkg_mgr.h"
 #include "eos_watchface_list.h"
 #include "eos_icon.h"
@@ -463,7 +463,7 @@ static script_engine_result_t _test_app_debug_start_internal(const char *app_id)
     }
 
     eos_activity_enter(activity);
-    ret = script_engine_run(pkg);
+    ret = script_engine_app_run(pkg);
     if (ret != SE_OK)
     {
         _test_app_debug_show_error(view, app_id, ret);
@@ -482,7 +482,7 @@ static void _test_app_debug_safe_nav_cleanup(void)
 static void _test_app_debug_exit_current_app(void)
 {
     if (script_engine_get_state() == SCRIPT_STATE_RUNNING ||
-        script_engine_get_state() == SCRIPT_STATE_SUSPEND ||
+        script_engine_get_state() == SCRIPT_STATE_IDLE ||
         script_engine_get_state() == SCRIPT_STATE_ERROR)
     {
         script_engine_request_stop();
@@ -506,7 +506,7 @@ static void _test_app_debug_restart_current_app(void)
         return;
 
     if (script_engine_get_state() == SCRIPT_STATE_RUNNING ||
-        script_engine_get_state() == SCRIPT_STATE_SUSPEND ||
+        script_engine_get_state() == SCRIPT_STATE_IDLE ||
         script_engine_get_state() == SCRIPT_STATE_ERROR)
     {
         script_engine_request_stop();

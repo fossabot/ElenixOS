@@ -447,8 +447,10 @@ static char *_state_get_enum_str(script_state_t state)
         return "SCRIPT_STATE_STOPPED";
     case SCRIPT_STATE_RUNNING:
         return "SCRIPT_STATE_RUNNING";
-    case SCRIPT_STATE_SUSPEND:
-        return "SCRIPT_STATE_SUSPEND";
+    case SCRIPT_STATE_IDLE:
+        return "SCRIPT_STATE_IDLE";
+    case SCRIPT_STATE_SUSPENDED:
+        return "SCRIPT_STATE_SUSPENDED";
     case SCRIPT_STATE_STOPPING:
         return "SCRIPT_STATE_STOPPING";
     case SCRIPT_STATE_ERROR:
@@ -470,6 +472,7 @@ static script_engine_result_t _change_state(script_state_t new_state)
     {
     case SCRIPT_STATE_STOPPED:
         if (new_state != SCRIPT_STATE_RUNNING &&
+            new_state != SCRIPT_STATE_SUSPENDED &&
             new_state != SCRIPT_STATE_ERROR)
         {
             EOS_LOG_E("Invalid state transition from STOPPED to %d", new_state);
@@ -478,7 +481,7 @@ static script_engine_result_t _change_state(script_state_t new_state)
         break;
 
     case SCRIPT_STATE_RUNNING:
-        if (new_state != SCRIPT_STATE_SUSPEND &&
+        if (new_state != SCRIPT_STATE_IDLE &&
             new_state != SCRIPT_STATE_STOPPING &&
             new_state != SCRIPT_STATE_ERROR)
         {
@@ -487,12 +490,23 @@ static script_engine_result_t _change_state(script_state_t new_state)
         }
         break;
 
-    case SCRIPT_STATE_SUSPEND:
+    case SCRIPT_STATE_IDLE:
         if (new_state != SCRIPT_STATE_STOPPED &&
             new_state != SCRIPT_STATE_RUNNING &&
+            new_state != SCRIPT_STATE_SUSPENDED &&
             new_state != SCRIPT_STATE_ERROR)
         {
-            EOS_LOG_E("Invalid state transition from SUSPEND to %d", new_state);
+            EOS_LOG_E("Invalid state transition from IDLE to %d", new_state);
+            return -SE_ERR_INVALID_STATE;
+        }
+        break;
+
+    case SCRIPT_STATE_SUSPENDED:
+        if (new_state != SCRIPT_STATE_STOPPED &&
+            new_state != SCRIPT_STATE_IDLE &&
+            new_state != SCRIPT_STATE_RUNNING)
+        {
+            EOS_LOG_E("Invalid state transition from SUSPENDED to %d", new_state);
             return -SE_ERR_INVALID_STATE;
         }
         break;
@@ -555,6 +569,185 @@ static void _collect_script_garbage(void)
      * the previous realm are reclaimed before the next app launch. */
     jerry_heap_gc(JERRY_GC_PRESSURE_HIGH);
     jerry_heap_gc(JERRY_GC_PRESSURE_LOW);
+}
+
+/* Context Linked List Management */
+static script_runtime_context_t *s_context_list = NULL;
+static uint32_t s_context_generation = 0;
+
+static void _context_list_remove(script_runtime_context_t *ctx)
+{
+    if (!ctx) return;
+
+    if (ctx->prev)
+        ctx->prev->next = ctx->next;
+    else
+        s_context_list = ctx->next;
+
+    if (ctx->next)
+        ctx->next->prev = ctx->prev;
+
+    ctx->prev = NULL;
+    ctx->next = NULL;
+}
+
+static void _context_list_add(script_runtime_context_t *ctx)
+{
+    if (!ctx) return;
+    ctx->next = s_context_list;
+    ctx->prev = NULL;
+    if (s_context_list)
+        s_context_list->prev = ctx;
+    s_context_list = ctx;
+}
+
+static void _context_cleanup_resources(script_runtime_context_t *ctx)
+{
+    if (!ctx || !ctx->is_valid) return;
+
+    if (jerry_value_is_object(ctx->realm))
+        jerry_value_free(ctx->realm);
+    if (jerry_value_is_object(ctx->old_realm))
+        jerry_value_free(ctx->old_realm);
+
+    if (ctx->script) {
+        _script_pkg_destroy(ctx->script);
+        ctx->script = NULL;
+        ctx->base_path = NULL;
+    } else if (ctx->base_path) {
+        eos_free((void *)ctx->base_path);
+        ctx->base_path = NULL;
+    }
+
+    ctx->realm = jerry_undefined();
+    ctx->old_realm = jerry_undefined();
+    ctx->is_valid = false;
+}
+
+static void _context_list_destroy_all(void)
+{
+    script_runtime_context_t *ctx = s_context_list;
+    while (ctx) {
+        script_runtime_context_t *next = ctx->next;
+        _context_cleanup_resources(ctx);
+        eos_free(ctx);
+        ctx = next;
+    }
+    s_context_list = NULL;
+}
+
+script_runtime_context_t *script_runtime_context_create(void)
+{
+    script_runtime_context_t *ctx = eos_malloc_zeroed(sizeof(script_runtime_context_t));
+    if (!ctx) {
+        EOS_LOG_E("Failed to allocate runtime context");
+        return NULL;
+    }
+
+    ctx->realm = jerry_undefined();
+    ctx->old_realm = jerry_undefined();
+    ctx->generation = ++s_context_generation;
+
+    _context_list_add(ctx);
+
+    EOS_LOG_D("Created runtime context #%u", ctx->generation);
+    return ctx;
+}
+
+script_engine_result_t script_runtime_context_destroy(script_runtime_context_t *ctx)
+{
+    if (!ctx) return -SE_ERR_NULL_PACKAGE;
+
+    EOS_LOG_D("Destroying runtime context #%u", ctx->generation);
+
+    _context_list_remove(ctx);
+    _context_cleanup_resources(ctx);
+    eos_free(ctx);
+
+    return SE_OK;
+}
+
+script_engine_result_t script_runtime_context_save(script_runtime_context_t *ctx)
+{
+    if (!ctx) return -SE_ERR_NULL_PACKAGE;
+
+    if (engine_ctx.state != SCRIPT_STATE_IDLE) {
+        EOS_LOG_E("Cannot save context: engine is in %d state", engine_ctx.state);
+        return -SE_ERR_INVALID_STATE;
+    }
+
+    if (ctx->is_valid) {
+        _context_cleanup_resources(ctx);
+    }
+
+    if (engine_ctx.current_script) {
+        snprintf(ctx->owner_id, sizeof(ctx->owner_id), "%s",
+                 engine_ctx.current_script->id ? engine_ctx.current_script->id : "unknown");
+        ctx->owner_type = engine_ctx.current_script->type;
+    }
+
+    ctx->realm = jerry_current_realm();
+    ctx->old_realm = engine_ctx.old_realm;
+
+    engine_ctx.old_realm = jerry_undefined();
+
+    ctx->script = engine_ctx.current_script;
+    ctx->base_path = (char *)engine_ctx.base_path;
+
+    engine_ctx.current_script = NULL;
+    engine_ctx.base_path = NULL;
+
+    ctx->is_valid = true;
+
+    _change_state(SCRIPT_STATE_SUSPENDED);
+    _collect_script_garbage();
+
+    EOS_LOG_I("Saved runtime context #%u (owner: %s)", ctx->generation, ctx->owner_id);
+    return SE_OK;
+}
+
+script_engine_result_t script_runtime_context_restore(script_runtime_context_t *ctx)
+{
+    if (!ctx) return -SE_ERR_NULL_PACKAGE;
+
+    if (engine_ctx.state != SCRIPT_STATE_SUSPENDED) {
+        EOS_LOG_E("Cannot restore context: engine is in %d state", engine_ctx.state);
+        return -SE_ERR_INVALID_STATE;
+    }
+
+    if (!ctx->is_valid) {
+        EOS_LOG_E("Cannot restore context #%u: context is invalid", ctx->generation);
+        return -SE_ERR_NO_SAVED_CONTEXT;
+    }
+
+    if (engine_ctx.current_script) {
+        _script_pkg_destroy(engine_ctx.current_script);
+        engine_ctx.current_script = NULL;
+    }
+    engine_ctx.base_path = NULL;
+
+    jerry_value_t current = jerry_current_realm();
+    engine_ctx.old_realm = ctx->old_realm;
+    jerry_set_realm(ctx->realm);
+
+    ctx->realm = jerry_undefined();
+    ctx->old_realm = jerry_undefined();
+
+    engine_ctx.current_script = ctx->script;
+    engine_ctx.base_path = ctx->base_path;
+
+    ctx->script = NULL;
+    ctx->base_path = NULL;
+    ctx->is_valid = false;
+
+    _context_list_remove(ctx);
+
+    EOS_LOG_I("Restored runtime context #%u (owner: %s)", ctx->generation, ctx->owner_id);
+
+    _change_state(SCRIPT_STATE_IDLE);
+    eos_event_post(EOS_EVENT_SCRIPT_STARTED, NULL, NULL);
+
+    return SE_OK;
 }
 
 inline void script_engine_set_prop_number(jerry_value_t obj,
@@ -1077,6 +1270,11 @@ script_state_t script_engine_get_state(void)
     return engine_ctx.state;
 }
 
+void script_engine_set_script_state(script_state_t state)
+{
+    _change_state(state);
+}
+
 char *script_engine_get_current_script_id(void)
 {
     return engine_ctx.current_script ? engine_ctx.current_script->id : NULL;
@@ -1095,13 +1293,13 @@ script_pkg_type_t script_engine_get_current_script_type(void)
 jerry_value_t script_engine_call(jerry_value_t func, jerry_value_t this_val, const jerry_value_t args_p[], const jerry_length_t args_count)
 {
     script_state_t state = script_engine_get_state();
-    if (state != SCRIPT_STATE_RUNNING && state != SCRIPT_STATE_SUSPEND)
+    if (state != SCRIPT_STATE_RUNNING && state != SCRIPT_STATE_IDLE)
     {
         EOS_LOG_W("Script engine is in %d state, rejecting JS call", state);
         return jerry_undefined();
     }
 
-    bool was_suspended = (state == SCRIPT_STATE_SUSPEND);
+    bool was_suspended = (state == SCRIPT_STATE_IDLE);
     if (was_suspended)
     {
         _change_state(SCRIPT_STATE_RUNNING);
@@ -1154,7 +1352,7 @@ jerry_value_t script_engine_call(jerry_value_t func, jerry_value_t this_val, con
     state = script_engine_get_state();
     if (state == SCRIPT_STATE_RUNNING)
     {
-        _change_state(SCRIPT_STATE_SUSPEND);
+        _change_state(SCRIPT_STATE_IDLE);
     }
 
     return result;
@@ -1208,6 +1406,34 @@ static script_engine_result_t _script_engine_stop_and_cleanup(void)
     return SE_OK;
 }
 
+script_engine_result_t script_engine_stop(void)
+{
+    EOS_LOG_I("Stop script (sync)");
+    switch (engine_ctx.state)
+    {
+    case SCRIPT_STATE_STOPPED:
+        return SE_OK;
+
+    case SCRIPT_STATE_RUNNING:
+    case SCRIPT_STATE_IDLE:
+    case SCRIPT_STATE_ERROR:
+        return _script_engine_stop_and_cleanup();
+
+    case SCRIPT_STATE_SUSPENDED:
+        _context_list_destroy_all();
+        _change_state(SCRIPT_STATE_STOPPED);
+        return SE_OK;
+
+    case SCRIPT_STATE_STOPPING:
+        EOS_LOG_D("Script is already stopping, waiting...");
+        return _script_engine_stop_and_cleanup();
+
+    default:
+        EOS_LOG_W("Cannot stop from current state: %d", engine_ctx.state);
+        return -SE_ERR_INVALID_STATE;
+    }
+}
+
 script_engine_result_t script_engine_request_stop(void)
 {
     EOS_LOG_I("Request stop script");
@@ -1226,8 +1452,12 @@ script_engine_result_t script_engine_request_stop(void)
         EOS_LOG_D("Script is already stopping");
         return SE_OK;
 
-    case SCRIPT_STATE_SUSPEND:
-        EOS_LOG_D("Stopping from SUSPEND state");
+    case SCRIPT_STATE_IDLE:
+        EOS_LOG_D("Stopping from IDLE state");
+        return _script_engine_stop_and_cleanup();
+
+    case SCRIPT_STATE_SUSPENDED:
+        EOS_LOG_D("Stopping from SUSPENDED state");
         return _script_engine_stop_and_cleanup();
 
     case SCRIPT_STATE_ERROR:
@@ -1289,8 +1519,12 @@ script_engine_result_t script_engine_run(const script_pkg_t *script_package)
     }
 
     // Check if current state allows running a new script
-    if (engine_ctx.state != SCRIPT_STATE_STOPPED &&
-        engine_ctx.state != SCRIPT_STATE_ERROR)
+    if (engine_ctx.state == SCRIPT_STATE_SUSPENDED)
+    {
+        EOS_LOG_D("SUSPENDED state: running new script, preserved saved context");
+    }
+    else if (engine_ctx.state != SCRIPT_STATE_STOPPED &&
+             engine_ctx.state != SCRIPT_STATE_ERROR)
     {
         EOS_LOG_E("Cannot run script in current state: %d", engine_ctx.state);
         return -SE_ERR_INVALID_STATE;
@@ -1424,7 +1658,7 @@ script_engine_result_t script_engine_run(const script_pkg_t *script_package)
                 // Execution succeeded
                 if (engine_ctx.state == SCRIPT_STATE_RUNNING)
                 {
-                    _change_state(SCRIPT_STATE_SUSPEND);
+                    _change_state(SCRIPT_STATE_IDLE);
                 }
                 eos_event_post(EOS_EVENT_SCRIPT_STARTED, NULL, NULL);
                 result = SE_OK;
@@ -1507,7 +1741,8 @@ script_engine_result_t script_engine_reload_current_script(void)
 
     script_state_t state = script_engine_get_state();
     if (state == SCRIPT_STATE_RUNNING ||
-        state == SCRIPT_STATE_SUSPEND ||
+        state == SCRIPT_STATE_IDLE ||
+        state == SCRIPT_STATE_SUSPENDED ||
         state == SCRIPT_STATE_ERROR)
     {
         script_engine_result_t stop_ret = script_engine_request_stop();
