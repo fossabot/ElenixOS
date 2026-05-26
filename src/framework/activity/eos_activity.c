@@ -170,6 +170,26 @@ static void _activity_reset_context(void)
     memset(_anim_callback_routes, 0, sizeof(_anim_callback_routes));
 }
 
+static void _activity_controller_init_failed(eos_activity_t *root_activity)
+{
+    if (_activity_ctx.activity_stack)
+    {
+        eos_stack_destroy(_activity_ctx.activity_stack);
+        _activity_ctx.activity_stack = NULL;
+    }
+
+    if (_activity_ctx.root_screen && lv_obj_is_valid(_activity_ctx.root_screen))
+    {
+        lv_obj_delete(_activity_ctx.root_screen);
+        if (root_activity && root_activity->view && !lv_obj_is_valid(root_activity->view))
+        {
+            root_activity->view = NULL;
+        }
+    }
+
+    _activity_reset_context();
+}
+
 static void _activity_show(eos_activity_t *activity)
 {
     EOS_CHECK_PTR_RETURN(activity);
@@ -206,7 +226,7 @@ static void _snapshot_img_delete_cb(lv_event_t *e)
 
     if (snapshot_node->draw_buf)
     {
-        lv_draw_buf_destroy(snapshot_node->draw_buf);
+        eos_draw_buf_destroy(snapshot_node->draw_buf);
         snapshot_node->draw_buf = NULL;
     }
 
@@ -692,7 +712,7 @@ lv_obj_t *eos_activity_take_snapshot(eos_activity_t *activity, bool include_head
 
     if (snapshot_result != LV_RESULT_OK)
     {
-        lv_draw_buf_destroy(snapshot);
+        eos_draw_buf_destroy(snapshot);
         lv_obj_delete(snapshot_obj);
         eos_free(snapshot_node);
         return NULL;
@@ -744,23 +764,8 @@ eos_result_t eos_activity_replace_root(eos_activity_t *new_root)
     if (_activity_ctx.root_activity)
     {
         eos_activity_t *old_root = _activity_ctx.root_activity;
-
-        // Call on_destroy for old root
-        if (old_root->lifecycle.on_destroy)
-        {
-            old_root->lifecycle.on_destroy(old_root);
-        }
-
-        // Clean up old root's view
-        if (old_root->view && lv_obj_is_valid(old_root->view))
-        {
-            lv_obj_delete(old_root->view);
-            old_root->view = NULL;
-        }
-
-        // Free the old activity structure itself
-        eos_free(old_root);
         _activity_ctx.root_activity = NULL;
+        _activity_run_destroy(old_root);
     }
 
     // Set new root
@@ -1023,8 +1028,7 @@ eos_result_t eos_activity_controller_init(eos_activity_t *root_activity)
     if (!root_activity->view)
     {
         EOS_LOG_E("controller_init: Root activity has no view (must use eos_activity_create_root)");
-        eos_stack_destroy(_activity_ctx.activity_stack);
-        _activity_reset_context();
+        _activity_controller_init_failed(root_activity);
         return EOS_FAILED;
     }
 
@@ -1067,8 +1071,7 @@ eos_result_t eos_activity_controller_init(eos_activity_t *root_activity)
     {
         EOS_LOG_E("Root activity's on_enter failed to create a valid view (view=%p)",
                   (void *)root_activity->view);
-        eos_stack_destroy(_activity_ctx.activity_stack);
-        _activity_reset_context();
+        _activity_controller_init_failed(root_activity);
         return EOS_FAILED;
     }
     _activity_show(root_activity);
@@ -1247,6 +1250,7 @@ eos_result_t eos_activity_back(void)
             return EOS_FAILED;
         }
         // This shouldn't happen, but if current is not root and stack is empty, go to root
+        _activity_ctx.current_activity->destroy_on_exit = true;
         _activity_switch_to(_activity_ctx.root_activity, true);
         return EOS_OK;
     }
@@ -1301,7 +1305,8 @@ eos_result_t eos_activity_back_to_watchface(void)
         return EOS_OK;
     }
 
-    // Destroy all activities in stack
+    // Destroy stacked activities, but keep current alive until _activity_switch_to()
+    // finishes any transition and destroys it through the normal path.
     while (eos_stack_get_size(_activity_ctx.activity_stack) > 0)
     {
         eos_activity_t *activity = eos_stack_pop(_activity_ctx.activity_stack);
@@ -1310,12 +1315,14 @@ eos_result_t eos_activity_back_to_watchface(void)
             continue;
         }
 
-        _activity_run_destroy(activity);
+        if (activity != current)
+        {
+            _activity_run_destroy(activity);
+        }
     }
 
     // Mark current activity for destruction
-    eos_activity_t *cur_activity = _activity_ctx.current_activity;
-    cur_activity->destroy_on_exit = true;
+    current->destroy_on_exit = true;
 
     // Switch to root (will call on_resume)
     _activity_switch_to(root, true);
