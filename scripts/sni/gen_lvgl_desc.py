@@ -129,6 +129,9 @@ SPECIAL_EXTRA_PROPERTIES: Dict[str, List[Tuple[str, Optional[str], Optional[str]
     "calendar": [
         ("chineseMode", None, "sni_api_lv_calendar_set_chinese_mode"),
     ],
+    "timer": [
+        ("autoDelete", None, "sni_api_prop_set_timer_auto_delete"),
+    ],
 }
 
 # Extra methods (not in lvgl.json) to inject per class.
@@ -136,6 +139,9 @@ SPECIAL_EXTRA_PROPERTIES: Dict[str, List[Tuple[str, Optional[str], Optional[str]
 SPECIAL_EXTRA_METHODS: Dict[str, List[Tuple[str, str]]] = {
     "obj": [
         ("setFontSize", "sni_api_eos_label_set_font_size"),
+    ],
+    "timer": [
+        ("setAutoDelete", "sni_api_lv_timer_set_auto_delete"),
     ],
     "canvas": [
         ("initBuffer", "sni_api_lv_canvas_init_buffer"),

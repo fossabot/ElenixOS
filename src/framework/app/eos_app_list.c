@@ -20,7 +20,7 @@
 #include "eos_image.h"
 #include "eos_port.h"
 #include "eos_anim.h"
-#include "script_engine_manager.h"
+#include "spm.h"
 #include "eos_service_config.h"
 #include "eos_event.h"
 #include "eos_lang.h"
@@ -143,7 +143,7 @@ static uint32_t _app_list_icon_count = 0;
 static void _app_on_destroy(eos_activity_t *a)
 {
     // Stop the app script (if any) before destroying context
-    script_engine_app_stop();
+    spm_app_stop();
 
     app_launch_ctx_t *ctx = eos_activity_get_user_data(a);
     if (ctx)
@@ -161,10 +161,7 @@ static void _app_on_enter(eos_activity_t *a)
     app_launch_ctx_t *ctx = eos_activity_get_user_data(a);
     EOS_CHECK_PTR_RETURN(ctx);
 
-    lv_obj_t *app_view = eos_activity_get_view(a);
-    EOS_CHECK_PTR_RETURN(app_view);
-
-    script_engine_result_t ret = script_engine_app_run(&ctx->pkg);
+    script_engine_result_t ret = spm_app_run(&ctx->pkg);
     if (ret != SE_OK)
     {
         // Determine error type based on error code

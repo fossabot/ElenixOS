@@ -30,8 +30,3 @@ void sni_mount(jerry_value_t js_realm)
     sni_api_lv_mount(js_realm);
     sni_api_eos_mount(js_realm);
 }
-
-void sni_unmount(jerry_value_t js_realm)
-{
-    (void)js_realm;
-}

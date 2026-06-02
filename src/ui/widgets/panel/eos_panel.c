@@ -284,7 +284,7 @@ void eos_panel_delete(eos_panel_t *panel)
     if (panel->container && lv_obj_is_valid(panel->container))
     {
         lv_obj_remove_event_cb(panel->container, _eos_panel_container_delete_cb);
-        lv_obj_del(panel->container);
+        lv_obj_delete(panel->container);
     }
 
     eos_free(panel);

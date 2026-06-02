@@ -176,7 +176,7 @@ static void _set_back_btn_style(lv_obj_t *btn)
     lv_obj_set_style_bg_color(btn, EOS_THEME_SECONDARY_COLOR, 0);
     lv_obj_align(btn, LV_ALIGN_LEFT_MID, _BACK_BTN_MARGIN_LEFT, 0);
 }
-// TODO 似乎Settings页面存在0.1KB内存泄漏
+
 void _play_title_changed_anim(eos_activity_t *from, eos_activity_t *to, bool need_anim, bool reverse_anim)
 {
     EOS_CHECK_PTR_RETURN(app_header);

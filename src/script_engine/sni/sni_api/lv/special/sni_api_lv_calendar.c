@@ -12,8 +12,6 @@
 #include "sni_api_export.h"
 #include "sni_type_bridge.h"
 #include "sni_types.h"
-#include "uthash.h"
-
 /* Types ------------------------------------------------------*/
 
 typedef struct sni_calendar_ctx
@@ -23,12 +21,9 @@ typedef struct sni_calendar_ctx
     uint32_t day_count;
     lv_calendar_date_t *highlighted;
     uint32_t highlighted_count;
-    UT_hash_handle hh;
 } sni_calendar_ctx_t;
 
 /* Variables --------------------------------------------------*/
-
-static sni_calendar_ctx_t *s_calendar_ctx = NULL;
 
 /* Function Implementations -----------------------------------*/
 
@@ -54,15 +49,19 @@ static void sni_calendar_free_day_names(char **day_names, uint32_t day_count)
 
 static void sni_calendar_release_ctx(lv_obj_t *obj)
 {
-    sni_calendar_ctx_t *ctx = NULL;
+    sni_control_block_t *cb = (sni_control_block_t *)lv_obj_get_user_data(obj);
+    if (!cb)
+    {
+        return;
+    }
 
-    HASH_FIND_PTR(s_calendar_ctx, &obj, ctx);
+    sni_calendar_ctx_t *ctx = (sni_calendar_ctx_t *)cb->aux;
     if (!ctx)
     {
         return;
     }
 
-    HASH_DEL(s_calendar_ctx, ctx);
+    cb->aux = NULL;
     sni_calendar_free_day_names(ctx->day_names, ctx->day_count);
     if (ctx->highlighted)
     {
@@ -73,22 +72,25 @@ static void sni_calendar_release_ctx(lv_obj_t *obj)
 
 static sni_calendar_ctx_t *sni_calendar_find_or_create_ctx(lv_obj_t *obj)
 {
-    sni_calendar_ctx_t *ctx = NULL;
-
-    HASH_FIND_PTR(s_calendar_ctx, &obj, ctx);
-    if (ctx)
+    sni_control_block_t *cb = (sni_control_block_t *)lv_obj_get_user_data(obj);
+    if (!cb)
     {
-        return ctx;
+        return NULL;
     }
 
-    ctx = eos_malloc_zeroed(sizeof(sni_calendar_ctx_t));
+    if (cb->aux)
+    {
+        return (sni_calendar_ctx_t *)cb->aux;
+    }
+
+    sni_calendar_ctx_t *ctx = eos_malloc_zeroed(sizeof(sni_calendar_ctx_t));
     if (!ctx)
     {
         return NULL;
     }
 
     ctx->obj = obj;
-    HASH_ADD_PTR(s_calendar_ctx, obj, ctx);
+    cb->aux = ctx;
     return ctx;
 }
 

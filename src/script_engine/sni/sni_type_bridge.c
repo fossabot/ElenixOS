@@ -1,6 +1,18 @@
 /**
  * @file sni_type_bridge.c
- * @brief Type bridge
+ * @brief Type bridge with Control Block architecture
+ *
+ * Architecture:
+ *   Object Tree Nodes (SNI_H_LV_OBJ):
+ *     - Control block stored in lv_obj_t->user_data for O(1) C→JS lookup
+ *     - JS native_ptr points to same control block for O(1) JS→C lookup
+ *     - Lifecycle: tied to LVGL object tree, DELETE event marks handle dead
+ *
+ *   Managed Resources (all other handle types):
+ *     - NO control block allocated (flattened memory layout)
+ *     - Data stored directly in sni_managed_resource_node_t in type-indexed lists
+ *     - JS native_ptr points to resource node for JS→C lookup
+ *     - Lifecycle: managed by SNI, cleaned up on Realm destroy
  */
 
 #include "sni_type_bridge.h"
@@ -10,20 +22,23 @@
 #include <stdlib.h>
 #include "lvgl.h"
 #include "sni_types.h"
+#include "sni_context.h"
 #include "eos_mem.h"
 #include "script_engine_core.h"
 #include "jerryscript.h"
 #include "sni_lv_types.h"
-#include "eos_event.h"
+#include "sni_callback_runtime.h"
+#define EOS_LOG_TAG "SNI-Bridge"
+#include "eos_log.h"
+
 /* Macros and Definitions -------------------------------------*/
 
-/* Variables --------------------------------------------------*/
 static sni_val_obj_t sni_val_objs[__SNI_TYPE_MAX] = {0};
-static sni_handle_t *sni_map = NULL;
-static void sni_handle_free_cb(void *native_p, struct jerry_object_native_info_t *info_p);
+static void sni_control_block_free_cb(void *native_p, struct jerry_object_native_info_t *info_p);
+static void sni_obj_deleted_cb(lv_event_t *e);
 static const jerry_object_native_info_t sni_native_info =
     {
-        .free_cb = sni_handle_free_cb,
+        .free_cb = sni_control_block_free_cb,
         .number_of_references = 0,
         .offset_of_references = 0,
 };
@@ -31,141 +46,226 @@ static sni_handle_destroy_cb_t sni_handle_destroy_cb[SNI_HANDLE_COUNT] = {0};
 
 static int sni_tb_get_destroy_cb_index(sni_type_t type)
 {
-    if (SNI_TYPE_IS_HANDLE_LC_EXTERNAL(type))
+    if (!SNI_TYPE_IS_HANDLE(type))
     {
-        return (int)(type - __SNI_HANDLE_LC_EXTERNAL_START - 1);
+        return -1;
+    }
+    return (int)(type - __SNI_HANDLE_START - 1);
+}
+
+static sni_context_t *sni_get_current_context(void)
+{
+    return sni_cb_get_context();
+}
+
+void sni_tb_unregister_handle(sni_control_block_t *cb)
+{
+    if (!cb)
+    {
+        return;
     }
 
-    if (SNI_TYPE_IS_HANDLE_LC_REALM(type))
+    if (cb->owner_ctx && cb->ptr)
     {
-        return (int)(SNI_HANDLE_LC_EXTERNAL_COUNT + (type - __SNI_HANDLE_LC_REALM_START - 1));
+        if (SNI_TYPE_IS_TREE_NODE(cb->type))
+        {
+            sni_context_remove_resource(cb->owner_ctx, cb->ptr, cb->type);
+        }
     }
 
-    return -1;
-}
-
-/* Function Implementations -----------------------------------*/
-
-static void sni_tb_write_bitfield(void *ptr, uint8_t bit_offset, uint8_t bit_width, uint32_t value)
-{
-    uint8_t *byte_ptr = (uint8_t *)ptr;
-    uint32_t mask = (1U << bit_width) - 1;
-    value &= mask;
-
-    uint32_t *word_ptr = (uint32_t *)byte_ptr;
-    uint32_t word_value = *word_ptr;
-
-    word_value &= ~(mask << bit_offset);
-    word_value |= (value << bit_offset);
-
-    *word_ptr = word_value;
-}
-
-static uint32_t sni_tb_read_bitfield(void *ptr, uint8_t bit_offset, uint8_t bit_width)
-{
-    uint8_t *byte_ptr = (uint8_t *)ptr;
-    uint32_t *word_ptr = (uint32_t *)byte_ptr;
-    uint32_t word_value = *word_ptr;
-
-    uint32_t mask = (1U << bit_width) - 1;
-    return (word_value >> bit_offset) & mask;
-}
-
-/************************** Handle management functions **************************/
-
-static sni_handle_t *sni_map_insert(void *ptr, jerry_value_t js_obj, sni_type_t type)
-{
-    sni_handle_t *handle = eos_malloc_zeroed(sizeof(sni_handle_t));
-    if (!handle)
+    if (!jerry_value_is_undefined(cb->js_obj) && !jerry_value_is_null(cb->js_obj))
     {
-        return NULL;
+        jerry_value_free(cb->js_obj);
+        cb->js_obj = jerry_undefined();
     }
 
-    handle->ptr = ptr;
-    handle->js_obj = js_obj;
-    handle->type = type;
-    handle->is_alive = true;
-
-    HASH_ADD_PTR(sni_map, ptr, handle);
-    return handle;
+    cb->ptr = NULL;
+    cb->is_alive = false;
 }
 
-static sni_handle_t *sni_map_find(void *ptr)
+static uint32_t sni_tb_read_bitfield(void *ptr, uint32_t bit_offset, uint32_t bit_width)
 {
-    sni_handle_t *handle = NULL;
-    HASH_FIND_PTR(sni_map, &ptr, handle);
-    return handle;
+    uint8_t *bytes = (uint8_t *)ptr;
+    uint32_t result = 0;
+    for (uint32_t i = 0; i < bit_width; i++) {
+        uint32_t total_bit = bit_offset + i;
+        uint32_t byte_idx = total_bit / 8;
+        uint32_t bit_idx = total_bit % 8;
+        if (bytes[byte_idx] & (1u << bit_idx)) {
+            result |= (1u << i);
+        }
+    }
+    return result;
+}
+
+static void sni_tb_write_bitfield(void *ptr, uint32_t bit_offset, uint32_t bit_width, uint32_t value)
+{
+    uint8_t *bytes = (uint8_t *)ptr;
+    for (uint32_t i = 0; i < bit_width; i++) {
+        uint32_t total_bit = bit_offset + i;
+        uint32_t byte_idx = total_bit / 8;
+        uint32_t bit_idx = total_bit % 8;
+        if (value & (1u << i)) {
+            bytes[byte_idx] |= (1u << bit_idx);
+        } else {
+            bytes[byte_idx] &= ~(1u << bit_idx);
+        }
+    }
+}
+
+static sni_control_block_t *sni_cb_from_obj(void *ptr)
+{
+    if (!ptr) return NULL;
+    return (sni_control_block_t *)lv_obj_get_user_data((lv_obj_t *)ptr);
+}
+
+static void *sni_node_from_native(void *ptr, sni_type_t type)
+{
+    if (!ptr) return NULL;
+
+    if (SNI_TYPE_IS_TREE_NODE(type))
+    {
+        return sni_cb_from_obj(ptr);
+    }
+
+    sni_context_t *ctx = sni_get_current_context();
+    return sni_context_find_resource(ctx, ptr, type);
+}
+
+static void sni_cb_embed_obj(void *ptr, sni_control_block_t *cb)
+{
+    lv_obj_t *obj = (lv_obj_t *)ptr;
+    lv_obj_set_user_data(obj, cb);
+    lv_obj_add_event_cb(obj, sni_obj_deleted_cb, LV_EVENT_DELETE, cb);
+}
+
+static void sni_handle_embed(void *ptr, sni_type_t type, jerry_value_t js_obj)
+{
+    sni_context_t *ctx = sni_get_current_context();
+    if (!ctx)
+    {
+        return;
+    }
+
+    if (SNI_TYPE_IS_TREE_NODE(type))
+    {
+        sni_control_block_t *cb = (sni_control_block_t *)jerry_object_get_native_ptr(js_obj, &sni_native_info);
+        if (cb)
+        {
+            sni_cb_embed_obj(ptr, cb);
+        }
+        return;
+    }
+
+    sni_context_add_resource(ctx, ptr, js_obj, type);
 }
 
 static void sni_obj_deleted_cb(lv_event_t *e)
 {
     lv_obj_t *obj = lv_event_get_target(e);
-    sni_handle_t *handle;
+    sni_control_block_t *cb;
 
     if (!obj)
     {
         return;
     }
 
-    handle = sni_map_find(obj);
-    if (!handle)
+    cb = (sni_control_block_t *)lv_event_get_user_data(e);
+    if (!cb)
     {
         return;
     }
 
-    HASH_DEL(sni_map, handle);
-    handle->ptr = NULL;
-    handle->is_alive = false;
+    /* Mark dead and clear ptr BEFORE jerry_value_free, which may
+       trigger GC and sni_control_block_free_cb. This prevents
+       free_cb from attempting LVGL cleanup on this object and
+       prevents use-after-free of cb after it is freed by free_cb. */
+    cb->is_alive = false;
+
+    jerry_value_t js_obj = cb->js_obj;
+    cb->js_obj = jerry_undefined();
+
+    cb->ptr = NULL;
+
+    jerry_value_free(js_obj);
 }
 
-static void sni_attach_obj_delete_hook(void *ptr, sni_type_t type)
+static void sni_control_block_free_cb(void *native_p, struct jerry_object_native_info_t *info_p)
 {
-    if (type != SNI_H_LV_OBJ || ptr == NULL)
-    {
-        return;
-    }
-
-    lv_obj_add_event_cb((lv_obj_t *)ptr, sni_obj_deleted_cb, LV_EVENT_DELETE, NULL);
-}
-
-static void sni_map_remove(void *ptr)
-{
-    sni_handle_t *handle = NULL;
-    HASH_FIND_PTR(sni_map, &ptr, handle);
-
-    if (!handle)
-    {
-        return;
-    }
-
-    HASH_DEL(sni_map, handle);
-    eos_free(handle);
-}
-
-static void sni_handle_free_cb(void *native_p, struct jerry_object_native_info_t *info_p)
-{
-    sni_handle_t *handle = (sni_handle_t *)native_p;
+    sni_control_block_t *cb = (sni_control_block_t *)native_p;
 
     (void)info_p;
 
-    if (!handle)
+    if (!cb)
     {
         return;
     }
 
-    handle->is_alive = false;
+    cb->is_alive = false;
 
-    if (handle->ptr != NULL)
+    if (cb->ptr != NULL)
     {
-        sni_handle_t *mapped = sni_map_find(handle->ptr);
-        if (mapped == handle)
+        switch (cb->type)
         {
-            HASH_DEL(sni_map, handle);
+        case SNI_H_LV_OBJ:
+        {
+            lv_obj_t *obj = (lv_obj_t *)cb->ptr;
+            if (lv_obj_is_valid(obj))
+            {
+                /* Do NOT call lv_obj_remove_event_cb here.
+                   The event descriptor lifecycle is managed by
+                   LVGL's obj_delete_core → lv_event_remove_all.
+                   If this free_cb is triggered during
+                   lv_obj_send_event(LV_EVENT_DELETE) → sni_obj_deleted_cb
+                   → jerry_value_free → GC, the descriptor has
+                   already been freed by lv_event_remove_all,
+                   causing a double-free in lv_tlsf_free. */
+                lv_obj_set_user_data(obj, NULL);
+            }
+            break;
+        }
+        default:
+            break;
         }
     }
 
-    eos_free(handle);
+    if (!jerry_value_is_undefined(cb->js_obj) && !jerry_value_is_null(cb->js_obj))
+    {
+        jerry_value_free(cb->js_obj);
+        cb->js_obj = jerry_undefined();
+    }
+
+    eos_free(cb);
 }
+
+static void sni_resource_node_free_cb(void *native_p, struct jerry_object_native_info_t *info_p)
+{
+    sni_managed_resource_node_t *node = (sni_managed_resource_node_t *)native_p;
+
+    (void)info_p;
+
+    if (!node)
+    {
+        return;
+    }
+
+    node->is_alive = false;
+
+    if (!jerry_value_is_undefined(node->js_obj) && !jerry_value_is_null(node->js_obj))
+    {
+        jerry_value_free(node->js_obj);
+        node->js_obj = jerry_undefined();
+    }
+
+    eos_free(node);
+}
+
+static const jerry_object_native_info_t sni_resource_native_info =
+    {
+        .free_cb = sni_resource_node_free_cb,
+        .number_of_references = 0,
+        .offset_of_references = 0,
+};
 
 /************************** Type bridge functions **************************/
 
@@ -387,26 +487,35 @@ bool sni_tb_js2c(jerry_value_t js_val, sni_type_t type, void *out_obj)
             return false;
         }
 
-        sni_handle_t *handle =
-            jerry_object_get_native_ptr(js_val, &sni_native_info);
-
-        if (!handle)
+        if (SNI_TYPE_IS_TREE_NODE(type))
         {
-            return false;
+            sni_control_block_t *cb =
+                jerry_object_get_native_ptr(js_val, &sni_native_info);
+
+            if (!cb || !cb->is_alive || cb->type != type)
+            {
+                return false;
+            }
+
+            *(void **)out_obj = cb->ptr;
+            return true;
         }
 
-        if (!handle->is_alive)
+        if (SNI_TYPE_IS_MANAGED_RESOURCE(type))
         {
-            return false;
+            sni_managed_resource_node_t *node =
+                jerry_object_get_native_ptr(js_val, &sni_resource_native_info);
+
+            if (!node || !node->is_alive || node->type != type)
+            {
+                return false;
+            }
+
+            *(void **)out_obj = node->ptr;
+            return true;
         }
 
-        if (handle->type != type)
-        {
-            return false;
-        }
-
-        *(void **)out_obj = handle->ptr;
-        return true;
+        return false;
     }
 
     return false;
@@ -434,18 +543,29 @@ bool sni_tb_js2c_any_handle(jerry_value_t js_val, void *out_obj, sni_type_t *out
         return false;
     }
 
-    sni_handle_t *handle = jerry_object_get_native_ptr(js_val, &sni_native_info);
-    if (!handle || !handle->is_alive)
+    sni_control_block_t *cb = jerry_object_get_native_ptr(js_val, &sni_native_info);
+    if (cb && cb->is_alive)
     {
-        return false;
+        *(void **)out_obj = cb->ptr;
+        if (out_type)
+        {
+            *out_type = cb->type;
+        }
+        return true;
     }
 
-    *(void **)out_obj = handle->ptr;
-    if (out_type)
+    sni_managed_resource_node_t *node = jerry_object_get_native_ptr(js_val, &sni_resource_native_info);
+    if (node && node->is_alive)
     {
-        *out_type = handle->type;
+        *(void **)out_obj = node->ptr;
+        if (out_type)
+        {
+            *out_type = node->type;
+        }
+        return true;
     }
-    return true;
+
+    return false;
 }
 
 jerry_value_t sni_tb_c2js(void *c_val, sni_type_t type)
@@ -515,20 +635,55 @@ jerry_value_t sni_tb_c2js(void *c_val, sni_type_t type)
             return jerry_null();
         }
 
-        sni_handle_t *handle = sni_map_find(ptr);
-        if (handle)
+        void *existing = sni_node_from_native(ptr, type);
+        if (existing)
         {
-            return jerry_value_copy(handle->js_obj);
+            if (SNI_TYPE_IS_TREE_NODE(type))
+            {
+                sni_control_block_t *cb = (sni_control_block_t *)existing;
+                return jerry_value_copy(cb->js_obj);
+            }
+            else
+            {
+                sni_managed_resource_node_t *node = (sni_managed_resource_node_t *)existing;
+                return jerry_value_copy(node->js_obj);
+            }
         }
 
         jerry_value_t js_obj = jerry_object();
 
-        sni_handle_t *new_handle =
-            sni_map_insert(ptr, js_obj, type);
+        if (SNI_TYPE_IS_TREE_NODE(type))
+        {
+            sni_control_block_t *new_cb = eos_malloc_zeroed(sizeof(sni_control_block_t));
+            if (!new_cb)
+            {
+                jerry_value_free(js_obj);
+                return jerry_undefined();
+            }
 
-        jerry_object_set_native_ptr(js_obj, &sni_native_info, new_handle);
-        sni_attach_obj_delete_hook(ptr, type);
-        return js_obj;
+            new_cb->ptr = ptr;
+            new_cb->js_obj = jerry_value_copy(js_obj);
+            new_cb->type = type;
+            new_cb->is_alive = true;
+            new_cb->owner_ctx = sni_get_current_context();
+
+            jerry_object_set_native_ptr(js_obj, &sni_native_info, new_cb);
+            sni_handle_embed(ptr, type, js_obj);
+            return js_obj;
+        }
+        else
+        {
+            sni_context_t *ctx = sni_get_current_context();
+            sni_context_add_resource(ctx, ptr, js_obj, type);
+            sni_managed_resource_node_t *node = sni_context_find_resource(ctx, ptr, type);
+            if (node)
+            {
+                jerry_object_set_native_ptr(js_obj, &sni_resource_native_info, node);
+                return js_obj;
+            }
+            jerry_value_free(js_obj);
+            return jerry_undefined();
+        }
     }
 
     return jerry_undefined();
@@ -604,22 +759,53 @@ bool sni_tb_c2js_set_object(void *c_val, sni_type_t type, jerry_value_t js_obj)
             return false;
         }
 
-        if (sni_map_find(ptr) != NULL)
+        void *existing = sni_node_from_native(ptr, type);
+        if (existing)
         {
-            return false;
+            if (SNI_TYPE_IS_TREE_NODE(type))
+            {
+                sni_control_block_t *cb = (sni_control_block_t *)existing;
+                jerry_object_set_native_ptr(js_obj, &sni_native_info, cb);
+                return true;
+            }
+            else
+            {
+                sni_managed_resource_node_t *node = (sni_managed_resource_node_t *)existing;
+                jerry_object_set_native_ptr(js_obj, &sni_resource_native_info, node);
+                return true;
+            }
         }
 
-        sni_handle_t *new_handle =
-            sni_map_insert(ptr, jerry_value_copy(js_obj), type);
-
-        if (!new_handle)
+        if (SNI_TYPE_IS_TREE_NODE(type))
         {
+            sni_control_block_t *new_cb = eos_malloc_zeroed(sizeof(sni_control_block_t));
+            if (!new_cb)
+            {
+                return false;
+            }
+
+            new_cb->ptr = ptr;
+            new_cb->js_obj = jerry_value_copy(js_obj);
+            new_cb->type = type;
+            new_cb->is_alive = true;
+            new_cb->owner_ctx = sni_get_current_context();
+
+            jerry_object_set_native_ptr(js_obj, &sni_native_info, new_cb);
+            sni_handle_embed(ptr, type, js_obj);
+            return true;
+        }
+        else
+        {
+            sni_context_t *ctx = sni_get_current_context();
+            sni_context_add_resource(ctx, ptr, js_obj, type);
+            sni_managed_resource_node_t *node = sni_context_find_resource(ctx, ptr, type);
+            if (node)
+            {
+                jerry_object_set_native_ptr(js_obj, &sni_resource_native_info, node);
+                return true;
+            }
             return false;
         }
-
-        jerry_object_set_native_ptr(js_obj, &sni_native_info, new_handle);
-        sni_attach_obj_delete_hook(ptr, type);
-        return true;
     }
 
     return false;
@@ -645,33 +831,12 @@ void sni_tb_register_handle_destroy_cb(sni_type_t type, sni_handle_destroy_cb_t 
     }
 }
 
-void _script_exited_cb(eos_event_t * e)
+void sni_tb_clear_resource_native_ptr(jerry_value_t obj)
 {
-    sni_handle_t *handle, *tmp;
-
-    LV_UNUSED(e);
-
-    HASH_ITER(hh, sni_map, handle, tmp)
-    {
-        int index = sni_tb_get_destroy_cb_index(handle->type);
-        if (index >= 0)
-        {
-            if (sni_handle_destroy_cb[index])
-            {
-                sni_handle_destroy_cb[index](handle->ptr);
-            }
-
-            HASH_DEL(sni_map, handle);
-            handle->ptr = NULL;
-            handle->is_alive = false;
-        }
-    }
+    jerry_object_set_native_ptr(obj, &sni_resource_native_info, NULL);
 }
 
 void sni_tb_init(void)
 {
-    // Initialize type bridge
     sni_lv_types_init();
-    // Register script exit callback function
-    eos_event_subscribe(EOS_EVENT_SCRIPT_EXITED, _script_exited_cb, NULL);
 }

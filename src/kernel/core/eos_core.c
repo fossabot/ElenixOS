@@ -26,7 +26,8 @@
 #include "eos_service_display.h"
 #include "eos_service_config.h"
 #include "eos_app.h"
-#include "script_engine_manager.h"
+#include "script_engine_core.h"
+#include "spm.h"
 #include "eos_watchface.h"
 #include "eos_watchface_list.h"
 #include "eos_app_list.h"
@@ -163,6 +164,7 @@ void eos_init(void)
     eos_service_haptic_init();
     eos_crown_init();
     script_engine_init();
+    spm_init();
     eos_service_config_init();
     eos_service_state_init();
     eos_service_battery_init();

@@ -97,6 +97,20 @@ void *eos_activity_get_user_data(eos_activity_t *activity);
 void eos_activity_set_user_data(eos_activity_t *activity, void *user_data);
 
 /**
+ * @brief Set fault panel for activity (internal use)
+ * @param activity Activity pointer
+ * @param fault_panel Fault panel pointer
+ */
+void eos_activity_set_fault_panel(eos_activity_t *activity, void *fault_panel);
+
+/**
+ * @brief Get fault panel from activity
+ * @param activity Activity pointer
+ * @return void* Fault panel pointer, NULL if not set
+ */
+void *eos_activity_get_fault_panel(eos_activity_t *activity);
+
+/**
  * @brief Get Activity title
  * @param activity Activity pointer
  * @return const char* Title string, returns NULL on failure

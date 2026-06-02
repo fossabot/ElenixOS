@@ -12,7 +12,7 @@
 #include "lvgl.h"
 #define EOS_LOG_TAG "WFJS"
 #include "eos_log.h"
-#include "script_engine_manager.h"
+#include "spm.h"
 #include "eos_app.h"
 #include "eos_theme.h"
 #include "eos_mem.h"
@@ -102,7 +102,7 @@ static void _js_on_enter(eos_activity_t *activity)
 
     lv_obj_add_event_cb(view, _js_long_pressed_cb, LV_EVENT_LONG_PRESSED, NULL);
 
-    script_engine_result_t ret = script_engine_watchface_start(&self->data.js.pkg);
+    script_engine_result_t ret = spm_watchface_start(&self->data.js.pkg);
     if (ret != SE_OK) {
         _js_handle_error(self, ret);
     }
@@ -118,7 +118,7 @@ static void _js_on_pause(eos_activity_t *activity)
     eos_control_center_hide();
     eos_msg_list_hide();
 
-    script_engine_watchface_pause();
+    spm_watchface_pause();
 }
 
 static void _js_on_resume(eos_activity_t *activity)
@@ -127,13 +127,13 @@ static void _js_on_resume(eos_activity_t *activity)
 
     eos_watchface_instance_t *self = eos_activity_get_user_data(activity);
 
-    script_engine_result_t ret = script_engine_watchface_resume();
+    script_engine_result_t ret = spm_watchface_resume();
     if (ret != SE_OK) {
         EOS_LOG_W("watchface_resume failed (%d), falling back to full reload", ret);
 
         script_pkg_t pkg = _js_load_package_from_disk(self->id);
         if (pkg.script_str) {
-            ret = script_engine_watchface_start(&pkg);
+            ret = spm_watchface_start(&pkg);
             if (ret != SE_OK) {
                 _js_handle_error(self, ret);
             }
@@ -153,7 +153,7 @@ static void _js_on_destroy(eos_activity_t *activity)
 
     eos_watchface_instance_t *self = eos_activity_get_user_data(activity);
 
-    script_engine_watchface_destroy();
+    spm_watchface_destroy();
 
     if (self) {
         eos_pkg_free(&self->data.js.pkg);

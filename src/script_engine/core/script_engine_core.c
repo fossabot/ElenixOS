@@ -1,4 +1,3 @@
-
 /**
  * @file script_engine_core.c
  * @brief Script engine core functionality implementation
@@ -30,6 +29,8 @@
 #include "eos_dispatcher.h"
 
 #include "sni.h"
+#include "sni_callback_runtime.h"
+#include "spm.h"
 
 /* Macros and Definitions -------------------------------------*/
 #define SCRIPT_INIT_FLAGS JERRY_INIT_MEM_STATS
@@ -38,232 +39,878 @@
 #define SCRIPT_BACKTRACE_MAX_FRAMES 16
 #define SCRIPT_BACKTRACE_SOURCE_SIZE 128
 #define SCRIPT_DEFAULT_TIMEOUT_MS 3000
+#define TRACKED_MODULES_INIT_CAPACITY 4
 
-/**
- * @brief Module task structure
- */
 typedef struct
 {
     jerry_value_t specifier;
     jerry_value_t user_value;
     jerry_value_t promise;
-} module_task_t;
+} _module_task_t;
 
 /**
- * @brief Script engine context structure
+ * @brief Script Engine Runtime — global engine singleton per SEC plan
  */
 typedef struct
 {
-    script_state_t state;         /**< Current state */
-    script_pkg_t *current_script; /**< Currently running script */
-    jerry_value_t old_realm;      /**< Old realm */
-    bool initialized;             /**< Whether engine is initialized */
-    char *error_info;             /**< Last run error information */
-    const char *base_path;        /**< Script base path */
-    script_error_location_t error_location; /**< Error location info */
-    script_error_location_t backtrace[SCRIPT_BACKTRACE_MAX_FRAMES]; /**< Error backtrace */
-    uint32_t backtrace_count;     /**< Number of backtrace frames */
-    uint32_t script_start_time;   /**< Script execution start time (tick) */
-    uint32_t script_timeout_ms;   /**< Script execution timeout (ms), 0 = no timeout */
-    bool stop_is_timeout;         /**< Flag indicating if stop was caused by timeout */
-} script_engine_context_t;
-
+    script_engine_state_t state;
+    bool initialized;
+    char *error_info;
+    script_error_location_t error_location;
+    script_error_location_t backtrace[SCRIPT_BACKTRACE_MAX_FRAMES];
+    uint32_t backtrace_count;
+    uint32_t script_start_time;
+    uint32_t script_timeout_ms;
+    bool stop_is_timeout;
+    bool pending_stop;
+    jerry_value_t old_realm;
+    script_program_t *current_program;
+    script_pkg_t owned_script;
+} script_engine_runtime_t;
 /* Variables --------------------------------------------------*/
-static script_engine_context_t engine_ctx = {
-    .state = SCRIPT_STATE_STOPPED,
-    .current_script = NULL,
+static script_engine_runtime_t engine_rt = {
+    .state = SCRIPT_ENGINE_STATE_UNINITIALIZED,
     .initialized = false,
-    .base_path = NULL,
     .script_start_time = 0,
     .script_timeout_ms = SCRIPT_DEFAULT_TIMEOUT_MS,
-    .stop_is_timeout = false};
+    .stop_is_timeout = false,
+    .pending_stop = false,
+    .old_realm = 0,
+    .current_program = NULL,
+};
 
 static eos_cqueue_t *_module_queue = NULL;
 
-static void _cleanup_module_task(module_task_t *task)
+static jerry_value_t *_tracked_modules = NULL;
+static int _tracked_module_count = 0;
+static int _tracked_module_capacity = 0;
+
+/*
+ * Track only the main module (entry point).
+ * Uses jerry_value_copy to maintain a separate reference so that the
+ * original parsed_code can be freed independently without causing
+ * use-after-free in _release_all_tracked_modules().
+ * Dependency modules are NOT tracked here. Their lifetime is managed by
+ * JerryScript's module system. When the main module is freed via
+ * jerry_value_free, JerryScript automatically releases dependencies.
+ * See: JerryScript docs/02.API-REFERENCE.md jerry_module_link example.
+ */
+static void _track_main_module(jerry_value_t module)
 {
-    if (!task)
-    {
+    if (jerry_value_is_exception(module))
         return;
+
+    if (_tracked_module_count >= _tracked_module_capacity)
+    {
+        int new_cap = _tracked_module_capacity > 0
+                          ? _tracked_module_capacity * 2
+                          : TRACKED_MODULES_INIT_CAPACITY;
+        jerry_value_t *new_arr = eos_realloc(_tracked_modules,
+                                             new_cap * sizeof(jerry_value_t));
+        if (!new_arr) return;
+        _tracked_modules = new_arr;
+        _tracked_module_capacity = new_cap;
+    }
+    _tracked_modules[_tracked_module_count++] = jerry_value_copy(module);
+}
+
+/*
+ * Release all tracked main modules.
+ * Since we only track main modules (not dependencies), this is safe.
+ * JerryScript's module system handles dependency lifetime automatically.
+ */
+static void _release_all_tracked_modules(void)
+{
+    EOS_LOG_D("RELEASE_TRACKED: freeing %d modules", _tracked_module_count);
+    for (int i = 0; i < _tracked_module_count; i++)
+    {
+        jerry_value_free(_tracked_modules[i]);
+    }
+    _tracked_module_count = 0;
+
+    if (_tracked_modules)
+    {
+        eos_free(_tracked_modules);
+        _tracked_modules = NULL;
+        _tracked_module_capacity = 0;
     }
 
+    jerry_heap_gc(JERRY_GC_PRESSURE_HIGH);
+}
+
+static script_program_t *_get_prog(void) { return engine_rt.current_program; }
+
+static const script_pkg_t *_get_pkg(void)
+{
+    return _get_prog() ? &_get_prog()->script : NULL;
+}
+
+static const char *_get_base_path(void)
+{
+    const script_pkg_t *p = _get_pkg();
+    return (p && p->base_path) ? p->base_path : "/";
+}
+
+static void _cleanup_module_task(_module_task_t *task)
+{
+    if (!task)
+        return;
     jerry_value_free(task->specifier);
     jerry_value_free(task->user_value);
     jerry_value_free(task->promise);
     eos_free(task);
 }
 
-/* Function Implementations -----------------------------------*/
+static void _pkg_free(script_pkg_t *p)
+{
+    if (!p)
+        return;
+    if (p->base_path)
+    {
+        eos_free((void *)p->base_path);
+        p->base_path = NULL;
+    }
+    if (p->script_str)
+    {
+        eos_free((void *)p->script_str);
+        p->script_str = NULL;
+    }
+}
+
+static void _pkg_clone_into(script_pkg_t *dst, const script_pkg_t *src)
+{
+    memset(dst, 0, sizeof(*dst));
+    dst->type = src->type;
+    dst->id = src->id ? eos_strdup(src->id) : NULL;
+    dst->name = src->name ? eos_strdup(src->name) : NULL;
+    dst->version = src->version ? eos_strdup(src->version) : NULL;
+    dst->author = src->author ? eos_strdup(src->author) : NULL;
+    dst->description = src->description ? eos_strdup(src->description) : NULL;
+    dst->script_str = src->script_str ? eos_strdup(src->script_str) : NULL;
+    dst->base_path = src->base_path ? eos_strdup(src->base_path) : NULL;
+}
+
+static void _pkg_free_fields(script_pkg_t *p)
+{
+    if (!p)
+        return;
+    if (p->id)
+    {
+        eos_free((void *)p->id);
+        p->id = NULL;
+    }
+    if (p->name)
+    {
+        eos_free((void *)p->name);
+        p->name = NULL;
+    }
+    if (p->version)
+    {
+        eos_free((void *)p->version);
+        p->version = NULL;
+    }
+    if (p->author)
+    {
+        eos_free((void *)p->author);
+        p->author = NULL;
+    }
+    if (p->description)
+    {
+        eos_free((void *)p->description);
+        p->description = NULL;
+    }
+}
 
 static jerry_value_t _module_import_cb(const jerry_value_t specifier,
-                                       const jerry_value_t user_value,
-                                       void *user_p)
+                                       const jerry_value_t user_value, void *user_p);
+static jerry_value_t _module_resolve_cb(const jerry_value_t specifier,
+                                        const jerry_value_t referrer, void *user_p);
+static jerry_value_t _read_and_parse_module(const char *file_path);
+static void _process_module_queue(void);
+static void _cleanup_module_queue(void);
+static void _set_error_info(const char *msg);
+static void _clear_error_info(void);
+static void _clear_error_location(void);
+static void _capture_error_backtrace(void);
+static void _parse_backtrace_from_js_array(jerry_value_t backtrace_array);
+static void _extract_error_location_from_exception(jerry_value_t exception_value);
+static void _script_engine_exception_handler(const char *tag, jerry_value_t result);
+static jerry_value_t _vm_exec_stop_callback(void *user_p);
+static script_engine_result_t _change_state(script_engine_state_t new_state);
+static void _collect_script_garbage(void);
+static void _check_mem(void);
+static void _engine_cleanup(void);
+static script_engine_result_t _script_engine_stop_and_cleanup(void);
+static jerry_value_t _script_engine_create_info(const script_pkg_t *script_package);
+
+/* ---- Realm Management (Encapsulated) ---- */
+
+static jerry_value_t _realm_create(void)
 {
-    // If the queue doesn't exist, create it
+    jerry_value_t realm = jerry_realm();
+    EOS_LOG_D("_realm_create: created realm=%p", (void *)realm);
+    return realm;
+}
+
+static void _realm_save_and_switch(jerry_value_t new_realm)
+{
+    engine_rt.old_realm = jerry_set_realm(new_realm);
+    EOS_LOG_D("_realm_save_and_switch: old_realm=%p, new_realm=%p",
+              (void *)engine_rt.old_realm, (void *)new_realm);
+}
+
+static void _realm_assign_to_program(script_program_t *prog, jerry_value_t realm)
+{
+    if (!prog)
+        return;
+
+    if (jerry_value_is_object(prog->realm))
+    {
+        EOS_LOG_W("_realm_assign_to_program: releasing existing realm=%p", (void *)prog->realm);
+        jerry_value_free(prog->realm);
+    }
+
+    prog->realm = jerry_value_copy(realm);
+    EOS_LOG_D("_realm_assign_to_program: prog=%p, realm=%p (ref copied)",
+              (void *)prog, (void *)prog->realm);
+}
+
+static void _realm_release_program(script_program_t *prog)
+{
+    if (!prog)
+        return;
+
+    if (jerry_value_is_object(prog->realm))
+    {
+        EOS_LOG_D("_realm_release_program: freeing realm=%p for prog=%p",
+                  (void *)prog->realm, (void *)prog);
+        jerry_value_free(prog->realm);
+        prog->realm = jerry_undefined();
+    }
+}
+
+static void _realm_restore_and_cleanup(void)
+{
+    if (jerry_value_is_object(engine_rt.old_realm))
+    {
+        jerry_value_t current = jerry_set_realm(engine_rt.old_realm);
+        if (jerry_value_is_object(current))
+        {
+            EOS_LOG_D("_realm_restore_and_cleanup: restoring old_realm=%p, freed current=%p",
+                      (void *)engine_rt.old_realm, (void *)current);
+            jerry_value_free(current);
+        }
+        engine_rt.old_realm = jerry_undefined();
+    }
+}
+
+/* Function Implementations -----------------------------------*/
+
+script_engine_state_t script_engine_get_state(void)
+{
+    return engine_rt.state;
+}
+
+void script_engine_set_current_program(script_program_t *prog)
+{
+    engine_rt.current_program = prog;
+}
+
+script_program_t *script_engine_get_current_program(void)
+{
+    return engine_rt.current_program;
+}
+
+static script_engine_result_t _change_state(script_engine_state_t new_state)
+{
+    switch (engine_rt.state)
+    {
+    case SCRIPT_ENGINE_STATE_UNINITIALIZED:
+        if (new_state != SCRIPT_ENGINE_STATE_IDLE && new_state != SCRIPT_ENGINE_STATE_RUNNING)
+        {
+            EOS_LOG_E("Invalid transition UNINITIALIZED->%d", new_state);
+            return -SE_ERR_INVALID_STATE;
+        }
+        break;
+    case SCRIPT_ENGINE_STATE_RUNNING:
+        if (new_state != SCRIPT_ENGINE_STATE_IDLE && new_state != SCRIPT_ENGINE_STATE_EXCEPTION && new_state != SCRIPT_ENGINE_STATE_UNINITIALIZED)
+        {
+            EOS_LOG_E("Invalid transition RUNNING->%d", new_state);
+            return -SE_ERR_INVALID_STATE;
+        }
+        break;
+    case SCRIPT_ENGINE_STATE_IDLE:
+        if (new_state != SCRIPT_ENGINE_STATE_RUNNING && new_state != SCRIPT_ENGINE_STATE_EXCEPTION && new_state != SCRIPT_ENGINE_STATE_UNINITIALIZED)
+        {
+            EOS_LOG_E("Invalid transition IDLE->%d", new_state);
+            return -SE_ERR_INVALID_STATE;
+        }
+        break;
+    case SCRIPT_ENGINE_STATE_EXCEPTION:
+        if (new_state != SCRIPT_ENGINE_STATE_IDLE && new_state != SCRIPT_ENGINE_STATE_UNINITIALIZED)
+        {
+            EOS_LOG_E("Invalid transition EXCEPTION->%d", new_state);
+            return -SE_ERR_INVALID_STATE;
+        }
+        break;
+    default:
+        return -SE_ERR_INVALID_STATE;
+    }
+    engine_rt.state = new_state;
+    return SE_OK;
+}
+
+static void _check_mem(void)
+{
+    if (!jerry_feature_enabled(JERRY_FEATURE_HEAP_STATS))
+        return;
+    jerry_heap_stats_t stats = {0};
+    if (jerry_heap_stats(&stats))
+        EOS_LOG_D("Heap: size=%d alloc=%d peak=%d",
+                  stats.size, stats.allocated_bytes, stats.peak_allocated_bytes);
+}
+
+static void _collect_script_garbage(void)
+{
+    jerry_heap_gc(JERRY_GC_PRESSURE_HIGH);
+}
+
+/* ---- Error handling ---- */
+
+static void _set_error_info(const char *msg)
+{
+    if (engine_rt.error_info)
+    {
+        eos_free(engine_rt.error_info);
+        engine_rt.error_info = NULL;
+    }
+    if (!msg)
+        return;
+    size_t len = strlen(msg);
+    engine_rt.error_info = eos_malloc(len + 1);
+    if (engine_rt.error_info)
+        memcpy(engine_rt.error_info, msg, len + 1);
+}
+
+static void _clear_error_info(void)
+{
+    if (engine_rt.error_info)
+    {
+        eos_free(engine_rt.error_info);
+        engine_rt.error_info = NULL;
+    }
+    _clear_error_location();
+}
+
+static void _clear_error_location(void)
+{
+    memset(&engine_rt.error_location, 0, sizeof(script_error_location_t));
+    memset(engine_rt.backtrace, 0, sizeof(engine_rt.backtrace));
+    engine_rt.backtrace_count = 0;
+}
+
+static void _parse_backtrace_from_js_array(jerry_value_t backtrace_array)
+{
+    if (!jerry_value_is_array(backtrace_array))
+        return;
+    uint32_t array_len = jerry_array_length(backtrace_array);
+    if (array_len == 0)
+        return;
+
+    /* Only clear the existing backtrace once we're sure we have
+     * data to replace it with. Otherwise _extract_error_location_from_exception
+     * may have already populated the backtrace from the exception.stack
+     * property, and we'd lose it. */
+    _clear_error_location();
+
+    uint32_t max_frames = (array_len > SCRIPT_BACKTRACE_MAX_FRAMES)
+                              ? SCRIPT_BACKTRACE_MAX_FRAMES
+                              : array_len;
+    for (uint32_t i = 0; i < max_frames; i++)
+    {
+        jerry_value_t element = jerry_object_get_index(backtrace_array, i);
+        if (!jerry_value_is_string(element))
+        {
+            jerry_value_free(element);
+            continue;
+        }
+        jerry_char_t buffer[SCRIPT_ERROR_STACK_BUF_SIZE];
+        jerry_size_t copied = jerry_string_to_buffer(element, JERRY_ENCODING_UTF8,
+                                                     buffer, SCRIPT_ERROR_STACK_BUF_SIZE - 1);
+        buffer[copied] = '\0';
+        jerry_value_free(element);
+        const char *str = (const char *)buffer;
+        const char *file_start = strstr(str, " ");
+        file_start = file_start ? file_start + 1 : str;
+        const char *colon1 = strchr(file_start, ':');
+        if (!colon1)
+            continue;
+        const char *colon2 = strchr(colon1 + 1, ':');
+        if (!colon2)
+            continue;
+        script_error_location_t *loc = &engine_rt.backtrace[i];
+        size_t file_len = colon1 - file_start;
+        if (file_len > SCRIPT_BACKTRACE_SOURCE_SIZE - 1)
+            file_len = SCRIPT_BACKTRACE_SOURCE_SIZE - 1;
+        strncpy(loc->source_name, file_start, file_len);
+        loc->source_name[file_len] = '\0';
+        loc->line = (uint32_t)atoi(colon1 + 1);
+        loc->column = (uint32_t)atoi(colon2 + 1);
+        engine_rt.backtrace_count++;
+    }
+    if (engine_rt.backtrace_count > 0)
+        engine_rt.error_location = engine_rt.backtrace[0];
+}
+
+static void _capture_error_backtrace(void)
+{
+    if (!jerry_feature_enabled(JERRY_FEATURE_LINE_INFO))
+    {
+        /* Don't clear — _extract_error_location_from_exception may have
+         * already populated the backtrace from the exception.stack property. */
+        return;
+    }
+    jerry_value_t backtrace_array = jerry_backtrace(SCRIPT_BACKTRACE_MAX_FRAMES);
+    if (jerry_value_is_exception(backtrace_array))
+    {
+        jerry_value_free(backtrace_array);
+        /* Don't clear — preserve what _extract_error_location_from_exception set. */
+        return;
+    }
+    _parse_backtrace_from_js_array(backtrace_array);
+    jerry_value_free(backtrace_array);
+}
+
+static void _extract_error_location_from_exception(jerry_value_t exception_value)
+{
+    if (!jerry_value_is_object(exception_value))
+    {
+        return;
+    }
+    _clear_error_location();
+    jerry_value_t stack_prop = jerry_object_get_sz(exception_value, "stack");
+    if (jerry_value_is_object(stack_prop) && jerry_value_is_array(stack_prop))
+    {
+        uint32_t array_len = jerry_array_length(stack_prop);
+        for (uint32_t i = 0; i < array_len && engine_rt.backtrace_count < SCRIPT_BACKTRACE_MAX_FRAMES; i++)
+        {
+            jerry_value_t element = jerry_object_get_index(stack_prop, i);
+            if (jerry_value_is_string(element))
+            {
+                jerry_char_t buffer[SCRIPT_ERROR_STACK_BUF_SIZE];
+                jerry_size_t copied = jerry_string_to_buffer(element, JERRY_ENCODING_UTF8, buffer, sizeof(buffer) - 1);
+                buffer[copied] = '\0';
+                script_error_location_t *loc = &engine_rt.backtrace[engine_rt.backtrace_count];
+                const char *line_start = (const char *)buffer;
+                const char *colon1 = strchr(line_start, ':');
+                const char *colon2 = colon1 ? strchr(colon1 + 1, ':') : NULL;
+                if (colon1 && colon2 && colon2 > colon1)
+                {
+                    size_t name_len = colon1 - line_start;
+                    if (name_len > SCRIPT_BACKTRACE_SOURCE_SIZE - 1)
+                        name_len = SCRIPT_BACKTRACE_SOURCE_SIZE - 1;
+                    memcpy(loc->source_name, line_start, name_len);
+                    loc->source_name[name_len] = '\0';
+                    loc->line = (uint32_t)atoi(colon1 + 1);
+                    loc->column = (uint32_t)atoi(colon2 + 1);
+                    if (engine_rt.backtrace_count == 0)
+                        engine_rt.error_location = *loc;
+                    engine_rt.backtrace_count++;
+                }
+            }
+            jerry_value_free(element);
+        }
+        jerry_value_free(stack_prop);
+        return;
+    }
+    jerry_value_free(stack_prop);
+    jerry_value_t line_prop = jerry_object_get_sz(exception_value, "lineNumber");
+    if (jerry_value_is_number(line_prop))
+        engine_rt.error_location.line = (uint32_t)jerry_value_as_number(line_prop);
+    jerry_value_free(line_prop);
+    jerry_value_t col_prop = jerry_object_get_sz(exception_value, "columnNumber");
+    if (jerry_value_is_number(col_prop))
+        engine_rt.error_location.column = (uint32_t)jerry_value_as_number(col_prop);
+    jerry_value_free(col_prop);
+}
+
+static void _script_engine_exception_handler(const char *tag, jerry_value_t result)
+{
+    EOS_LOG_E("===================================");
+    jerry_value_t value = jerry_exception_value(result, false);
+    jerry_value_t final_str_val = value;
+    char stack_buf[SCRIPT_ERROR_STACK_BUF_SIZE];
+    char *buf = stack_buf;
+    bool need_free = false;
+    if (!jerry_value_is_string(value))
+        final_str_val = jerry_value_to_string(value);
+    jerry_size_t req_sz = jerry_string_size(final_str_val, JERRY_ENCODING_CESU8);
+    if (req_sz > 0)
+    {
+        if (req_sz >= sizeof(stack_buf))
+        {
+            buf = eos_malloc(req_sz + 1);
+            need_free = (buf != NULL);
+        }
+        if (buf)
+        {
+            jerry_string_to_buffer(final_str_val, JERRY_ENCODING_CESU8, (jerry_char_t *)buf, req_sz);
+            buf[req_sz] = '\0';
+            EOS_LOG_E("%s Error: %s", tag, buf);
+            _set_error_info(buf);
+            if (need_free)
+                eos_free(buf);
+        }
+    }
+    else
+    {
+        _set_error_info("Unknown error");
+    }
+    if (final_str_val != value)
+        jerry_value_free(final_str_val);
+    _extract_error_location_from_exception(value);
+    jerry_value_free(value);
+    _capture_error_backtrace();
+    if (engine_rt.backtrace_count > 0)
+    {
+        EOS_LOG_E("Backtrace (%u frames):", engine_rt.backtrace_count);
+        for (uint32_t i = 0; i < engine_rt.backtrace_count; i++)
+        {
+            EOS_LOG_E("  #%u %s:%u:%u",
+                      i,
+                      engine_rt.backtrace[i].source_name,
+                      engine_rt.backtrace[i].line,
+                      engine_rt.backtrace[i].column);
+        }
+    }
+}
+
+/* ---- Query ---- */
+
+const char *script_engine_get_error_info(void)
+{
+    return engine_rt.error_info ? engine_rt.error_info : "";
+}
+
+const script_error_location_t *script_engine_get_error_location(void) { return &engine_rt.error_location; }
+uint32_t script_engine_get_backtrace_count(void) { return engine_rt.backtrace_count; }
+
+const script_error_location_t *script_engine_get_error_backtrace(uint32_t *count)
+{
+    if (count)
+        *count = engine_rt.backtrace_count;
+    return engine_rt.backtrace;
+}
+
+char *script_engine_get_current_script_id(void)
+{
+    const script_pkg_t *p = _get_pkg();
+    return p ? (char *)p->id : NULL;
+}
+
+char *script_engine_get_current_script_name(void)
+{
+    const script_pkg_t *p = _get_pkg();
+    return p ? (char *)p->name : NULL;
+}
+
+script_pkg_type_t script_engine_get_current_script_type(void)
+{
+    const script_pkg_t *p = _get_pkg();
+    return p ? p->type : SCRIPT_TYPE_UNKNOWN;
+}
+
+/* ---- Throwing / Registering / Helpers ---- */
+
+jerry_value_t script_engine_throw_error(const char *message)
+{
+    jerry_value_t error_obj = jerry_error_sz(JERRY_ERROR_TYPE, (const jerry_char_t *)message);
+    return jerry_throw_value(error_obj, true);
+}
+
+void script_engine_register_functions(jerry_value_t parent,
+                                      const script_engine_func_entry_t *entries, size_t funcs_count)
+{
+    for (size_t i = 0; i < funcs_count; ++i)
+    {
+        jerry_value_t target_obj = parent;
+        if (entries[i].class_name)
+        {
+            jerry_value_t class_key = jerry_string_sz(entries[i].class_name);
+            jerry_value_t class_obj = jerry_object_get(parent, class_key);
+            if (jerry_value_is_undefined(class_obj))
+            {
+                jerry_value_free(class_obj);
+                class_obj = jerry_object();
+                jerry_value_free(jerry_object_set(parent, class_key, class_obj));
+            }
+            jerry_value_free(class_key);
+            target_obj = class_obj;
+        }
+        jerry_value_t fn = jerry_function_external(entries[i].handler);
+        jerry_value_t method_key = jerry_string_sz(entries[i].method_name);
+        jerry_value_free(jerry_object_set(target_obj, method_key, fn));
+        jerry_value_free(method_key);
+        jerry_value_free(fn);
+        if (entries[i].class_name)
+            jerry_value_free(target_obj);
+    }
+}
+
+inline void script_engine_set_prop_number(jerry_value_t obj, const char *prop_name, double value)
+{
+    jerry_value_t prop = jerry_string_sz(prop_name);
+    jerry_value_t val = jerry_number(value);
+    jerry_value_free(jerry_object_set(obj, prop, val));
+    jerry_value_free(val);
+    jerry_value_free(prop);
+}
+
+inline void script_engine_set_prop_bool(jerry_value_t obj, const char *prop_name, bool value)
+{
+    jerry_value_t prop = jerry_string_sz(prop_name);
+    jerry_value_t val = jerry_boolean(value);
+    jerry_value_free(jerry_object_set(obj, prop, val));
+    jerry_value_free(val);
+    jerry_value_free(prop);
+}
+
+inline void script_engine_set_prop_string(jerry_value_t obj, const char *prop_name, const char *value)
+{
+    jerry_value_t prop = jerry_string_sz(prop_name);
+    jerry_value_t val = jerry_string_sz(value);
+    jerry_value_free(jerry_object_set(obj, prop, val));
+    jerry_value_free(val);
+    jerry_value_free(prop);
+}
+
+/* ---- JS Call (raw — SPM gates) ---- */
+
+jerry_value_t script_engine_call_raw(jerry_value_t func, jerry_value_t this_val,
+                                     const jerry_value_t args_p[], const jerry_length_t args_count)
+{
+    script_engine_state_t prev_state = engine_rt.state;
+    if (prev_state != SCRIPT_ENGINE_STATE_RUNNING && prev_state != SCRIPT_ENGINE_STATE_IDLE)
+    {
+        EOS_LOG_W("script_engine_call_raw: rejecting, state=%d", prev_state);
+        return jerry_undefined();
+    }
+
+    if (prev_state == SCRIPT_ENGINE_STATE_IDLE)
+    {
+        _change_state(SCRIPT_ENGINE_STATE_RUNNING);
+        if (engine_rt.script_timeout_ms > 0)
+            engine_rt.script_start_time = eos_tick_get();
+    }
+
+    jerry_value_t result = jerry_call(func, this_val, args_p, args_count);
+
+    if (jerry_value_is_exception(result))
+    {
+        if (engine_rt.pending_stop)
+        {
+            if (engine_rt.stop_is_timeout)
+                EOS_LOG_W("Script call timeout");
+            else
+                EOS_LOG_D("Script call stopped by request");
+        }
+        else
+        {
+            _script_engine_exception_handler("Jerry Call", result);
+            _change_state(SCRIPT_ENGINE_STATE_EXCEPTION);
+        }
+    }
+
+    if (engine_rt.state == SCRIPT_ENGINE_STATE_RUNNING)
+        _change_state(SCRIPT_ENGINE_STATE_IDLE);
+
+    return result;
+}
+
+/* ---- Timeout ---- */
+
+void script_engine_set_timeout(uint32_t timeout_ms) { engine_rt.script_timeout_ms = timeout_ms; }
+uint32_t script_engine_get_timeout(void) { return engine_rt.script_timeout_ms; }
+
+/* ---- VM halt callback ---- */
+
+static jerry_value_t _vm_exec_stop_callback(void *user_p)
+{
+    (void)user_p;
+    if (engine_rt.pending_stop)
+    {
+        EOS_LOG_D("Script execution stopped by request");
+        return jerry_string_sz("Script terminated by request");
+    }
+    static uint32_t _halt_tick_skip = 0;
+    if (++_halt_tick_skip < 64)
+        return jerry_undefined();
+    _halt_tick_skip = 0;
+
+    if (engine_rt.script_timeout_ms > 0 && engine_rt.state == SCRIPT_ENGINE_STATE_RUNNING)
+    {
+        uint32_t elapsed = eos_tick_get() - engine_rt.script_start_time;
+        if (elapsed >= engine_rt.script_timeout_ms)
+        {
+            EOS_LOG_W("Script execution timeout (%u ms)", elapsed);
+            engine_rt.stop_is_timeout = true;
+            engine_rt.pending_stop = true;
+            _change_state(SCRIPT_ENGINE_STATE_EXCEPTION);
+            return jerry_string_sz("Script execution timeout");
+        }
+    }
+    return jerry_undefined();
+}
+
+/* ---- Init ---- */
+
+script_engine_result_t script_engine_init(void)
+{
+    if (engine_rt.initialized)
+        return SE_ERR_ALREADY_INITIALIZED;
+    if (!jerry_feature_enabled(JERRY_FEATURE_VM_EXEC_STOP) || !jerry_feature_enabled(JERRY_FEATURE_REALM) || !jerry_feature_enabled(JERRY_FEATURE_MODULE))
+    {
+        EOS_LOG_E("Required JerryScript features not enabled");
+        return -SE_ERR_JERRY_INIT_FAIL;
+    }
+    if (!lv_is_initialized())
+    {
+        EOS_LOG_E("LVGL not initialized");
+        return -SE_ERR_NOT_INITIALIZED;
+    }
+    jerry_init(SCRIPT_INIT_FLAGS);
+    sni_init();
+    engine_rt.initialized = true;
+    EOS_LOG_I("Script engine initialized");
+    return SE_OK;
+}
+
+/* ---- Module system ---- */
+
+static jerry_value_t _module_import_cb(const jerry_value_t specifier,
+                                       const jerry_value_t user_value, void *user_p)
+{
+    (void)user_p;
     if (!_module_queue)
     {
         _module_queue = eos_cqueue_create(SCRIPT_DEFAULT_CQUEUE_CAPACITY);
         if (!_module_queue)
-        {
-            EOS_LOG_E("Failed to create module queue");
             return jerry_throw_sz(JERRY_ERROR_COMMON, "Failed to create module queue");
-        }
     }
-
-    // Allocate a module task
-    module_task_t *task = eos_malloc_zeroed(sizeof(module_task_t));
+    _module_task_t *task = eos_malloc_zeroed(sizeof(_module_task_t));
     if (!task)
-    {
-        EOS_LOG_E("Failed to allocate module task");
         return jerry_throw_sz(JERRY_ERROR_COMMON, "Failed to allocate module task");
-    }
-
     task->specifier = jerry_value_copy(specifier);
     task->user_value = jerry_value_copy(user_value);
-
     jerry_value_t promise = jerry_promise();
     task->promise = jerry_value_copy(promise);
-
-    // Enqueue the task
     if (!eos_cqueue_enqueue(_module_queue, task))
     {
-        EOS_LOG_E("Failed to enqueue module task");
         jerry_value_free(task->specifier);
         jerry_value_free(task->user_value);
         jerry_value_free(task->promise);
         eos_free(task);
         return jerry_throw_sz(JERRY_ERROR_COMMON, "Failed to enqueue module task");
     }
-
     return promise;
 }
 
 static jerry_value_t _module_resolve_cb(const jerry_value_t specifier,
-                        const jerry_value_t referrer,
-                        void *user_p)
+                                        const jerry_value_t referrer, void *user_p)
 {
+    (void)referrer;
+    (void)user_p;
     jerry_char_t specifier_buffer[256];
     jerry_size_t copied_bytes = jerry_string_to_buffer(specifier, JERRY_ENCODING_UTF8,
-                                                       (jerry_char_t *)specifier_buffer,
-                                                       sizeof(specifier_buffer) - 1);
+                                                       specifier_buffer, sizeof(specifier_buffer) - 1);
     specifier_buffer[copied_bytes] = '\0';
 
-    EOS_LOG_D("Resolving dependency: %s", (const char *)specifier_buffer);
-
     char full_path[512];
-
     if (specifier_buffer[0] == '.' && (specifier_buffer[1] == '/' || specifier_buffer[1] == '\\'))
-    {
-        // Relative path: use the script's base path
-        const char *referrer_path = engine_ctx.base_path ? engine_ctx.base_path : "/";
-        snprintf(full_path, sizeof(full_path), "%s%s", referrer_path, specifier_buffer + 2);
-    }
+        snprintf(full_path, sizeof(full_path), "%s%s", _get_base_path(), (const char *)specifier_buffer + 2);
     else
-    {
-        // Absolute path or module name: use directly
         snprintf(full_path, sizeof(full_path), "%s", (const char *)specifier_buffer);
-    }
-
-    EOS_LOG_D("Full path: %s", full_path);
-
-    // Read module file content using the storage service
     char *source_str = eos_storage_read_file(full_path);
     if (!source_str)
     {
         EOS_LOG_E("Failed to read dependency: %s", full_path);
         return jerry_throw_sz(JERRY_ERROR_COMMON, "Failed to read dependency");
     }
-
     jerry_size_t file_size = strlen(source_str);
-
     jerry_parse_options_t parse_options;
     parse_options.options = JERRY_PARSE_MODULE | JERRY_PARSE_HAS_SOURCE_NAME | JERRY_PARSE_HAS_USER_VALUE;
     parse_options.source_name = jerry_string_sz(full_path);
-    parse_options.user_value = jerry_string_sz(engine_ctx.base_path);
-
+    parse_options.user_value = jerry_string_sz(_get_base_path());
     jerry_value_t result = jerry_parse((const jerry_char_t *)source_str, file_size, &parse_options);
-
     jerry_value_free(parse_options.source_name);
     jerry_value_free(parse_options.user_value);
     eos_free(source_str);
 
+    if (jerry_value_is_exception(result)) {
+        EOS_LOG_E("DEP PARSE FAILED: %s", specifier_buffer);
+    }
+    /* Dependency modules are NOT tracked here. Their lifetime is managed by
+     * JerryScript's module system. When the main module is freed via
+     * jerry_value_free, JerryScript automatically releases dependencies. */
     return result;
 }
 
 static jerry_value_t _read_and_parse_module(const char *file_path)
 {
-    // Read module file content using the storage service
     char *source_str = eos_storage_read_file(file_path);
     if (!source_str)
-    {
-        EOS_LOG_E("Failed to read module file: %s", file_path);
         return jerry_throw_sz(JERRY_ERROR_COMMON, "Failed to read module file");
-    }
-
     jerry_size_t file_size = strlen(source_str);
-
     jerry_parse_options_t parse_options;
     parse_options.options = JERRY_PARSE_MODULE | JERRY_PARSE_HAS_SOURCE_NAME | JERRY_PARSE_HAS_USER_VALUE;
     parse_options.source_name = jerry_string_sz(file_path);
-    parse_options.user_value = jerry_string_sz(engine_ctx.base_path);
-
+    parse_options.user_value = jerry_string_sz(_get_base_path());
     jerry_value_t result = jerry_parse((const jerry_char_t *)source_str, file_size, &parse_options);
-
     jerry_value_free(parse_options.source_name);
     jerry_value_free(parse_options.user_value);
     eos_free(source_str);
-
     return result;
 }
 
 static void _process_module_queue(void)
 {
     if (!_module_queue)
-    {
-        EOS_LOG_D("Module queue is empty");
         return;
-    }
-
-    size_t task_count = eos_cqueue_get_size(_module_queue);
-    EOS_LOG_I("Processing %zu module(s)...", task_count);
-
+    int processed = 0;
     while (eos_cqueue_get_size(_module_queue) > 0)
     {
-        module_task_t *task = (module_task_t *)eos_cqueue_dequeue(_module_queue);
+        _module_task_t *task = (_module_task_t *)eos_cqueue_dequeue(_module_queue);
         if (!task)
-        {
             continue;
-        }
-
         jerry_char_t specifier_buffer[256];
         jerry_size_t copied_bytes = jerry_string_to_buffer(task->specifier, JERRY_ENCODING_UTF8,
-                                                           (jerry_char_t *)specifier_buffer,
-                                                           sizeof(specifier_buffer) - 1);
+                                                           specifier_buffer, sizeof(specifier_buffer) - 1);
         specifier_buffer[copied_bytes] = '\0';
 
-        EOS_LOG_D("Loading module: %s", (const char *)specifier_buffer);
-
         jerry_value_t module_value = _read_and_parse_module((const char *)specifier_buffer);
-
         if (jerry_value_is_exception(module_value))
         {
-            EOS_LOG_E("Failed to parse module: %s", (const char *)specifier_buffer);
-            jerry_value_free(module_value);
             _cleanup_module_task(task);
             continue;
         }
 
+        EOS_LOG_D("MODULE QUEUE: parsed %s", specifier_buffer);
+
         jerry_value_t link_result = jerry_module_link(module_value, _module_resolve_cb, NULL);
         if (jerry_value_is_exception(link_result))
         {
-            EOS_LOG_E("Failed to link module: %s", (const char *)specifier_buffer);
+            jerry_value_t exc = jerry_exception_value(link_result, false);
+            jerry_char_t buf[128];
+            jerry_size_t sz = jerry_string_to_buffer(exc, JERRY_ENCODING_UTF8, buf, sizeof(buf) - 1);
+            buf[sz] = '\0';
+            jerry_value_free(exc);
+            EOS_LOG_E("MODULE QUEUE LINK FAILED: %s - %s", specifier_buffer, buf);
             jerry_value_free(link_result);
             jerry_value_free(module_value);
             _cleanup_module_task(task);
             continue;
         }
         jerry_value_free(link_result);
-
         jerry_value_t eval_result = jerry_module_evaluate(module_value);
         if (jerry_value_is_exception(eval_result))
         {
@@ -274,38 +921,25 @@ static void _process_module_queue(void)
             continue;
         }
         jerry_value_free(eval_result);
-
         jerry_value_t namespace_value = jerry_module_namespace(module_value);
         jerry_value_t resolve_result = jerry_promise_resolve(task->promise, namespace_value);
-
         if (jerry_value_is_exception(resolve_result))
-        {
-            EOS_LOG_E("Failed to resolve promise for module: %s", (const char *)specifier_buffer);
             jerry_value_free(resolve_result);
-        }
-        else
-        {
-            jerry_value_free(resolve_result);
-        }
-
         jerry_value_free(namespace_value);
         jerry_value_free(module_value);
-
-        // Clean up task resources
         _cleanup_module_task(task);
+        processed++;
     }
+    EOS_LOG_D("MODULE QUEUE: processed %d modules", processed);
 }
 
 static void _cleanup_module_queue(void)
 {
     if (!_module_queue)
-    {
         return;
-    }
-
     while (eos_cqueue_get_size(_module_queue) > 0)
     {
-        module_task_t *task = (module_task_t *)eos_cqueue_dequeue(_module_queue);
+        _module_task_t *task = (_module_task_t *)eos_cqueue_dequeue(_module_queue);
         if (task)
         {
             jerry_value_free(task->specifier);
@@ -314,857 +948,36 @@ static void _cleanup_module_queue(void)
             eos_free(task);
         }
     }
-
     eos_cqueue_destroy(_module_queue);
     _module_queue = NULL;
 }
 
-jerry_value_t script_engine_throw_error(const char *message)
-{
-    jerry_value_t error_obj = jerry_error_sz(JERRY_ERROR_TYPE, (const jerry_char_t *)message);
-    return jerry_throw_value(error_obj, true);
-}
-
-static void _set_error_info(const char *msg)
-{
-    if (engine_ctx.error_info)
-    {
-        eos_free(engine_ctx.error_info);
-        engine_ctx.error_info = NULL;
-    }
-
-    if (!msg)
-    {
-        return;
-    }
-
-    size_t len = strlen(msg);
-    engine_ctx.error_info = (char *)eos_malloc(len + 1);
-
-    if (engine_ctx.error_info)
-    {
-        memcpy(engine_ctx.error_info, msg, len + 1);
-    }
-}
-
-const char *script_engine_get_error_info(void)
-{
-    return engine_ctx.error_info ? engine_ctx.error_info : "";
-}
-
-const script_error_location_t *script_engine_get_error_location(void)
-{
-    return &engine_ctx.error_location;
-}
-
-const script_error_location_t *script_engine_get_error_backtrace(uint32_t *count)
-{
-    if (count != NULL)
-    {
-        *count = engine_ctx.backtrace_count;
-    }
-    return engine_ctx.backtrace;
-}
-
-uint32_t script_engine_get_backtrace_count(void)
-{
-    return engine_ctx.backtrace_count;
-}
-
-static void _clear_error_location(void);
-
-static void _clear_error_info(void)
-{
-    if (engine_ctx.error_info)
-    {
-        eos_free(engine_ctx.error_info);
-        engine_ctx.error_info = NULL;
-    }
-    _clear_error_location();
-}
-
-static void _script_pkg_destroy(script_pkg_t *pkg)
-{
-    if (!pkg)
-    {
-        return;
-    }
-
-    if (pkg->base_path)
-    {
-        eos_free((void *)pkg->base_path);
-        pkg->base_path = NULL;
-    }
-
-    eos_pkg_free(pkg);
-    eos_free(pkg);
-}
-
-static script_pkg_t *_script_pkg_clone(const script_pkg_t *source)
-{
-    if (!source)
-    {
-        return NULL;
-    }
-
-    script_pkg_t *copy = eos_malloc_zeroed(sizeof(script_pkg_t));
-    if (!copy)
-    {
-        return NULL;
-    }
-
-    copy->type = source->type;
-    copy->id = eos_strdup(source->id);
-    copy->name = eos_strdup(source->name);
-    copy->version = eos_strdup(source->version);
-    copy->author = eos_strdup(source->author);
-    copy->description = eos_strdup(source->description);
-    copy->script_str = eos_strdup(source->script_str);
-    copy->base_path = eos_strdup(source->base_path);
-
-    if ((source->id && !copy->id) ||
-        (source->name && !copy->name) ||
-        (source->version && !copy->version) ||
-        (source->author && !copy->author) ||
-        (source->description && !copy->description) ||
-        (source->script_str && !copy->script_str) ||
-        (source->base_path && !copy->base_path))
-    {
-        _script_pkg_destroy(copy);
-        return NULL;
-    }
-
-    return copy;
-}
-
-#if EOS_COMPILE_MODE == DEUBG
-
-static char *_state_get_enum_str(script_state_t state)
-{
-    switch (state)
-    {
-    case SCRIPT_STATE_STOPPED:
-        return "SCRIPT_STATE_STOPPED";
-    case SCRIPT_STATE_RUNNING:
-        return "SCRIPT_STATE_RUNNING";
-    case SCRIPT_STATE_IDLE:
-        return "SCRIPT_STATE_IDLE";
-    case SCRIPT_STATE_SUSPENDED:
-        return "SCRIPT_STATE_SUSPENDED";
-    case SCRIPT_STATE_STOPPING:
-        return "SCRIPT_STATE_STOPPING";
-    case SCRIPT_STATE_ERROR:
-        return "SCRIPT_STATE_ERROR";
-    default:
-        break;
-    }
-}
-
-#endif /* EOS_COMPILE_MODE */
-
-/**
- * @brief State transition function
- */
-static script_engine_result_t _change_state(script_state_t new_state)
-{
-    // State transition validation
-    switch (engine_ctx.state)
-    {
-    case SCRIPT_STATE_STOPPED:
-        if (new_state != SCRIPT_STATE_RUNNING &&
-            new_state != SCRIPT_STATE_SUSPENDED &&
-            new_state != SCRIPT_STATE_ERROR)
-        {
-            EOS_LOG_E("Invalid state transition from STOPPED to %d", new_state);
-            return -SE_ERR_INVALID_STATE;
-        }
-        break;
-
-    case SCRIPT_STATE_RUNNING:
-        if (new_state != SCRIPT_STATE_IDLE &&
-            new_state != SCRIPT_STATE_STOPPING &&
-            new_state != SCRIPT_STATE_ERROR)
-        {
-            EOS_LOG_E("Invalid state transition from RUNNING to %d", new_state);
-            return -SE_ERR_INVALID_STATE;
-        }
-        break;
-
-    case SCRIPT_STATE_IDLE:
-        if (new_state != SCRIPT_STATE_STOPPED &&
-            new_state != SCRIPT_STATE_RUNNING &&
-            new_state != SCRIPT_STATE_SUSPENDED &&
-            new_state != SCRIPT_STATE_ERROR)
-        {
-            EOS_LOG_E("Invalid state transition from IDLE to %d", new_state);
-            return -SE_ERR_INVALID_STATE;
-        }
-        break;
-
-    case SCRIPT_STATE_SUSPENDED:
-        if (new_state != SCRIPT_STATE_STOPPED &&
-            new_state != SCRIPT_STATE_IDLE &&
-            new_state != SCRIPT_STATE_RUNNING)
-        {
-            EOS_LOG_E("Invalid state transition from SUSPENDED to %d", new_state);
-            return -SE_ERR_INVALID_STATE;
-        }
-        break;
-
-    case SCRIPT_STATE_STOPPING:
-        if (new_state != SCRIPT_STATE_STOPPED &&
-            new_state != SCRIPT_STATE_ERROR)
-        {
-            EOS_LOG_E("Invalid state transition from STOPPING to %d", new_state);
-            return -SE_ERR_INVALID_STATE;
-        }
-        break;
-
-    case SCRIPT_STATE_ERROR:
-        if (new_state != SCRIPT_STATE_STOPPED)
-        {
-            EOS_LOG_E("Invalid state transition from ERROR to %d", new_state);
-            return -SE_ERR_INVALID_STATE;
-        }
-        break;
-
-    default:
-        break;
-    }
-#if EOS_COMPILE_MODE == DEUBG
-    EOS_LOG_D("State change: %s -> %s", _state_get_enum_str(engine_ctx.state), _state_get_enum_str(new_state));
-#endif /* EOS_COMPILE_MODE */
-    engine_ctx.state = new_state;
-    switch (new_state)
-    {
-    case SCRIPT_STATE_STOPPED:
-        eos_event_post(EOS_EVENT_SCRIPT_EXITED, NULL, NULL);
-        break;
-
-    default:
-        break;
-    }
-    return SE_OK;
-}
-
-static void _check_mem(void)
-{
-    if (!jerry_feature_enabled(JERRY_FEATURE_HEAP_STATS))
-    {
-        EOS_LOG_E("Feature not enabled: JERRY_FEATURE_HEAP_STATS");
-        return;
-    }
-    jerry_heap_stats_t stats = {0};
-    bool get_stats_ret = jerry_heap_stats(&stats);
-    if (get_stats_ret)
-    {
-        EOS_LOG_I("Heap total sz: %d\nAllocated bytes: %d\nPeak allocated bytes: %d\n",
-                  stats.size, stats.allocated_bytes, stats.peak_allocated_bytes);
-    }
-}
-
-static void _collect_script_garbage(void)
-{
-    /* Run an aggressive pass after script-exit hooks so native handles owned by
-     * the previous realm are reclaimed before the next app launch. */
-    jerry_heap_gc(JERRY_GC_PRESSURE_HIGH);
-    jerry_heap_gc(JERRY_GC_PRESSURE_LOW);
-}
-
-/* Context Linked List Management */
-static script_runtime_context_t *s_context_list = NULL;
-static uint32_t s_context_generation = 0;
-
-static void _context_list_remove(script_runtime_context_t *ctx)
-{
-    if (!ctx) return;
-
-    if (ctx->prev)
-        ctx->prev->next = ctx->next;
-    else
-        s_context_list = ctx->next;
-
-    if (ctx->next)
-        ctx->next->prev = ctx->prev;
-
-    ctx->prev = NULL;
-    ctx->next = NULL;
-}
-
-static void _context_list_add(script_runtime_context_t *ctx)
-{
-    if (!ctx) return;
-    ctx->next = s_context_list;
-    ctx->prev = NULL;
-    if (s_context_list)
-        s_context_list->prev = ctx;
-    s_context_list = ctx;
-}
-
-static void _context_cleanup_resources(script_runtime_context_t *ctx)
-{
-    if (!ctx || !ctx->is_valid) return;
-
-    if (jerry_value_is_object(ctx->realm))
-        jerry_value_free(ctx->realm);
-    if (jerry_value_is_object(ctx->old_realm))
-        jerry_value_free(ctx->old_realm);
-
-    if (ctx->script) {
-        _script_pkg_destroy(ctx->script);
-        ctx->script = NULL;
-        ctx->base_path = NULL;
-    } else if (ctx->base_path) {
-        eos_free((void *)ctx->base_path);
-        ctx->base_path = NULL;
-    }
-
-    ctx->realm = jerry_undefined();
-    ctx->old_realm = jerry_undefined();
-    ctx->is_valid = false;
-}
-
-static void _context_list_destroy_all(void)
-{
-    script_runtime_context_t *ctx = s_context_list;
-    while (ctx) {
-        script_runtime_context_t *next = ctx->next;
-        _context_cleanup_resources(ctx);
-        eos_free(ctx);
-        ctx = next;
-    }
-    s_context_list = NULL;
-}
-
-script_runtime_context_t *script_runtime_context_create(void)
-{
-    script_runtime_context_t *ctx = eos_malloc_zeroed(sizeof(script_runtime_context_t));
-    if (!ctx) {
-        EOS_LOG_E("Failed to allocate runtime context");
-        return NULL;
-    }
-
-    ctx->realm = jerry_undefined();
-    ctx->old_realm = jerry_undefined();
-    ctx->generation = ++s_context_generation;
-
-    _context_list_add(ctx);
-
-    EOS_LOG_D("Created runtime context #%u", ctx->generation);
-    return ctx;
-}
-
-script_engine_result_t script_runtime_context_destroy(script_runtime_context_t *ctx)
-{
-    if (!ctx) return -SE_ERR_NULL_PACKAGE;
-
-    EOS_LOG_D("Destroying runtime context #%u", ctx->generation);
-
-    _context_list_remove(ctx);
-    _context_cleanup_resources(ctx);
-    eos_free(ctx);
-
-    return SE_OK;
-}
-
-script_engine_result_t script_runtime_context_save(script_runtime_context_t *ctx)
-{
-    if (!ctx) return -SE_ERR_NULL_PACKAGE;
-
-    if (engine_ctx.state != SCRIPT_STATE_IDLE) {
-        EOS_LOG_E("Cannot save context: engine is in %d state", engine_ctx.state);
-        return -SE_ERR_INVALID_STATE;
-    }
-
-    if (ctx->is_valid) {
-        _context_cleanup_resources(ctx);
-    }
-
-    if (engine_ctx.current_script) {
-        snprintf(ctx->owner_id, sizeof(ctx->owner_id), "%s",
-                 engine_ctx.current_script->id ? engine_ctx.current_script->id : "unknown");
-        ctx->owner_type = engine_ctx.current_script->type;
-    }
-
-    ctx->realm = jerry_current_realm();
-    ctx->old_realm = engine_ctx.old_realm;
-
-    engine_ctx.old_realm = jerry_undefined();
-
-    ctx->script = engine_ctx.current_script;
-    ctx->base_path = (char *)engine_ctx.base_path;
-
-    engine_ctx.current_script = NULL;
-    engine_ctx.base_path = NULL;
-
-    ctx->is_valid = true;
-
-    _change_state(SCRIPT_STATE_SUSPENDED);
-    _collect_script_garbage();
-
-    EOS_LOG_I("Saved runtime context #%u (owner: %s)", ctx->generation, ctx->owner_id);
-    return SE_OK;
-}
-
-script_engine_result_t script_runtime_context_restore(script_runtime_context_t *ctx)
-{
-    if (!ctx) return -SE_ERR_NULL_PACKAGE;
-
-    if (engine_ctx.state != SCRIPT_STATE_SUSPENDED) {
-        EOS_LOG_E("Cannot restore context: engine is in %d state", engine_ctx.state);
-        return -SE_ERR_INVALID_STATE;
-    }
-
-    if (!ctx->is_valid) {
-        EOS_LOG_E("Cannot restore context #%u: context is invalid", ctx->generation);
-        return -SE_ERR_NO_SAVED_CONTEXT;
-    }
-
-    if (engine_ctx.current_script) {
-        _script_pkg_destroy(engine_ctx.current_script);
-        engine_ctx.current_script = NULL;
-    }
-    engine_ctx.base_path = NULL;
-
-    jerry_value_t current = jerry_current_realm();
-    engine_ctx.old_realm = ctx->old_realm;
-    jerry_set_realm(ctx->realm);
-
-    ctx->realm = jerry_undefined();
-    ctx->old_realm = jerry_undefined();
-
-    engine_ctx.current_script = ctx->script;
-    engine_ctx.base_path = ctx->base_path;
-
-    ctx->script = NULL;
-    ctx->base_path = NULL;
-    ctx->is_valid = false;
-
-    _context_list_remove(ctx);
-
-    EOS_LOG_I("Restored runtime context #%u (owner: %s)", ctx->generation, ctx->owner_id);
-
-    _change_state(SCRIPT_STATE_IDLE);
-    eos_event_post(EOS_EVENT_SCRIPT_STARTED, NULL, NULL);
-
-    return SE_OK;
-}
-
-inline void script_engine_set_prop_number(jerry_value_t obj,
-                                          const char *prop_name,
-                                          double value)
-{
-    jerry_value_t prop = jerry_string_sz(prop_name);
-    jerry_value_t jerry_value = jerry_number(value);
-    jerry_value_t ret = jerry_object_set(obj, prop, jerry_value);
-
-    jerry_value_free(ret);
-    jerry_value_free(jerry_value);
-    jerry_value_free(prop);
-}
-
-inline void script_engine_set_prop_bool(jerry_value_t obj,
-                                        const char *prop_name,
-                                        bool value)
-{
-    jerry_value_t prop = jerry_string_sz(prop_name);
-    jerry_value_t jerry_value = jerry_boolean(value);
-    jerry_value_t ret = jerry_object_set(obj, prop, jerry_value);
-
-    jerry_value_free(ret);
-    jerry_value_free(jerry_value);
-    jerry_value_free(prop);
-}
-
-inline void script_engine_set_prop_string(jerry_value_t obj,
-                                          const char *prop_name,
-                                          const char *value)
-{
-    jerry_value_t prop = jerry_string_sz(prop_name);
-    jerry_value_t jerry_value = jerry_string_sz(value);
-    jerry_value_t ret = jerry_object_set(obj, prop, jerry_value);
-
-    jerry_value_free(ret);
-    jerry_value_free(jerry_value);
-    jerry_value_free(prop);
-}
-
-static void _clear_error_location(void)
-{
-    memset(&engine_ctx.error_location, 0, sizeof(script_error_location_t));
-    memset(engine_ctx.backtrace, 0, sizeof(engine_ctx.backtrace));
-    engine_ctx.backtrace_count = 0;
-}
-
-static void _parse_backtrace_from_js_array(jerry_value_t backtrace_array)
-{
-    _clear_error_location();
-
-    if (!jerry_value_is_array(backtrace_array))
-    {
-        return;
-    }
-
-    uint32_t array_len = jerry_array_length(backtrace_array);
-    if (array_len == 0)
-    {
-        return;
-    }
-
-    uint32_t max_frames = array_len;
-    if (max_frames > SCRIPT_BACKTRACE_MAX_FRAMES)
-    {
-        max_frames = SCRIPT_BACKTRACE_MAX_FRAMES;
-    }
-
-    for (uint32_t i = 0; i < max_frames; i++)
-    {
-        jerry_value_t element = jerry_object_get_index(backtrace_array, i);
-        if (!jerry_value_is_string(element))
-        {
-            jerry_value_free(element);
-            continue;
-        }
-
-        jerry_char_t buffer[SCRIPT_ERROR_STACK_BUF_SIZE];
-        jerry_size_t copied = jerry_string_to_buffer(element, JERRY_ENCODING_UTF8, buffer, SCRIPT_ERROR_STACK_BUF_SIZE - 1);
-        buffer[copied] = '\0';
-        jerry_value_free(element);
-
-        // 解析类似 "at main.js:5:15" 的字符串
-        const char *str = (const char *)buffer;
-        script_error_location_t *loc = &engine_ctx.backtrace[i];
-
-        // 查找文件名
-        const char *file_start = strstr(str, " ");
-        if (file_start == NULL)
-        {
-            file_start = str;
-        }
-        else
-        {
-            file_start++;
-        }
-
-        const char *colon1 = strchr(file_start, ':');
-        if (colon1 == NULL)
-        {
-            continue;
-        }
-
-        const char *colon2 = strchr(colon1 + 1, ':');
-        if (colon2 == NULL)
-        {
-            continue;
-        }
-
-        // 提取文件名
-        size_t file_len = colon1 - file_start;
-        if (file_len > SCRIPT_BACKTRACE_SOURCE_SIZE - 1)
-        {
-            file_len = SCRIPT_BACKTRACE_SOURCE_SIZE - 1;
-        }
-        strncpy(loc->source_name, file_start, file_len);
-        loc->source_name[file_len] = '\0';
-
-        // 提取行号和列号
-        loc->line = (uint32_t)atoi(colon1 + 1);
-        loc->column = (uint32_t)atoi(colon2 + 1);
-
-        engine_ctx.backtrace_count++;
-    }
-
-    if (engine_ctx.backtrace_count > 0)
-    {
-        engine_ctx.error_location = engine_ctx.backtrace[0];
-    }
-}
-
-static void _capture_error_backtrace(void)
-{
-    if (!jerry_feature_enabled(JERRY_FEATURE_LINE_INFO))
-    {
-        EOS_LOG_W("Line info disabled, backtrace not available");
-        _clear_error_location();
-        return;
-    }
-
-    jerry_value_t backtrace_array = jerry_backtrace(SCRIPT_BACKTRACE_MAX_FRAMES);
-    if (jerry_value_is_exception(backtrace_array))
-    {
-        EOS_LOG_E("jerry_backtrace returned exception");
-        jerry_value_free(backtrace_array);
-        _clear_error_location();
-        return;
-    }
-
-    uint32_t array_len = jerry_array_length(backtrace_array);
-
-    for (uint32_t i = 0; i < array_len && i < 5; i++)
-    {
-        jerry_value_t element = jerry_object_get_index(backtrace_array, i);
-        if (jerry_value_is_string(element))
-        {
-            jerry_char_t buffer[256];
-            jerry_size_t copied = jerry_string_to_buffer(element, JERRY_ENCODING_UTF8, buffer, sizeof(buffer) - 1);
-            buffer[copied] = '\0';
-            EOS_LOG_D("  backtrace[%u]: %s", i, (const char *)buffer);
-        }
-        jerry_value_free(element);
-    }
-
-    _parse_backtrace_from_js_array(backtrace_array);
-    jerry_value_free(backtrace_array);
-}
-
-static void _log_backtrace(void)
-{
-    if (engine_ctx.backtrace_count == 0)
-    {
-        if (engine_ctx.error_location.line > 0)
-        {
-            EOS_LOG_E("  --> %s:%u:%u",
-                      engine_ctx.error_location.source_name,
-                      engine_ctx.error_location.line,
-                      engine_ctx.error_location.column);
-        }
-        return;
-    }
-
-    EOS_LOG_E("Backtrace:");
-    for (uint32_t i = 0; i < engine_ctx.backtrace_count; i++)
-    {
-        script_error_location_t *loc = &engine_ctx.backtrace[i];
-        if (loc->source_name[0] != '\0')
-        {
-            EOS_LOG_E("  %u: %s:%u:%u", i, loc->source_name, loc->line, loc->column);
-        }
-        else
-        {
-            EOS_LOG_E("  %u: <unknown>", i);
-        }
-    }
-}
-
-static void _extract_error_location_from_exception(jerry_value_t exception_value)
-{
-    if (!jerry_value_is_object(exception_value))
-    {
-        return;
-    }
-
-    _clear_error_location();
-
-    jerry_value_t stack_prop = jerry_object_get_sz(exception_value, "stack");
-    if (jerry_value_is_object(stack_prop))
-    {
-        if (jerry_value_is_array(stack_prop))
-        {
-            uint32_t array_len = jerry_array_length(stack_prop);
-
-            for (uint32_t i = 0; i < array_len && engine_ctx.backtrace_count < SCRIPT_BACKTRACE_MAX_FRAMES; i++)
-            {
-                jerry_value_t element = jerry_object_get_index(stack_prop, i);
-                if (jerry_value_is_string(element))
-                {
-                    jerry_char_t buffer[SCRIPT_ERROR_STACK_BUF_SIZE];
-                    jerry_size_t copied = jerry_string_to_buffer(element, JERRY_ENCODING_UTF8,
-                                                                 buffer, sizeof(buffer) - 1);
-                    buffer[copied] = '\0';
-
-                    script_error_location_t *loc = &engine_ctx.backtrace[engine_ctx.backtrace_count];
-
-                    const char *line_start = (const char *)buffer;
-                    const char *colon1 = strchr(line_start, ':');
-                    const char *colon2 = NULL;
-
-                    if (colon1)
-                    {
-                        colon2 = strchr(colon1 + 1, ':');
-                    }
-
-                    if (colon1 && colon2 && colon2 > colon1)
-                    {
-                        size_t name_len = colon1 - line_start;
-                        if (name_len > SCRIPT_BACKTRACE_SOURCE_SIZE - 1)
-                        {
-                            name_len = SCRIPT_BACKTRACE_SOURCE_SIZE - 1;
-                        }
-                        memcpy(loc->source_name, line_start, name_len);
-                        loc->source_name[name_len] = '\0';
-
-                        loc->line = (uint32_t)atoi(colon1 + 1);
-                        loc->column = (uint32_t)atoi(colon2 + 1);
-
-                        if (engine_ctx.backtrace_count == 0)
-                        {
-                            engine_ctx.error_location = *loc;
-                        }
-
-                        engine_ctx.backtrace_count++;
-                    }
-                }
-                jerry_value_free(element);
-            }
-        }
-        jerry_value_free(stack_prop);
-        return;
-    }
-    jerry_value_free(stack_prop);
-
-    jerry_value_t line_prop = jerry_object_get_sz(exception_value, "lineNumber");
-    if (jerry_value_is_number(line_prop))
-    {
-        engine_ctx.error_location.line = (uint32_t)jerry_value_as_number(line_prop);
-    }
-    jerry_value_free(line_prop);
-
-    jerry_value_t col_prop = jerry_object_get_sz(exception_value, "columnNumber");
-    if (jerry_value_is_number(col_prop))
-    {
-        engine_ctx.error_location.column = (uint32_t)jerry_value_as_number(col_prop);
-    }
-    jerry_value_free(col_prop);
-
-    jerry_value_t msg_prop = jerry_object_get_sz(exception_value, "message");
-    if (jerry_value_is_string(msg_prop))
-    {
-        jerry_size_t size = jerry_string_size(msg_prop, JERRY_ENCODING_UTF8);
-        if (size > 0 && size < SCRIPT_BACKTRACE_SOURCE_SIZE)
-        {
-            jerry_string_to_buffer(msg_prop, JERRY_ENCODING_UTF8,
-                                  (jerry_char_t *)engine_ctx.error_location.source_name,
-                                  size);
-            engine_ctx.error_location.source_name[size] = '\0';
-        }
-        else if (size >= SCRIPT_BACKTRACE_SOURCE_SIZE)
-        {
-            jerry_string_to_buffer(msg_prop, JERRY_ENCODING_UTF8,
-                                  (jerry_char_t *)engine_ctx.error_location.source_name,
-                                  SCRIPT_BACKTRACE_SOURCE_SIZE - 1);
-            engine_ctx.error_location.source_name[SCRIPT_BACKTRACE_SOURCE_SIZE - 1] = '\0';
-        }
-    }
-    jerry_value_free(msg_prop);
-}
-
-/**
- * @brief Parse JS error variable and print error reason
- */
-static void _script_engine_exception_handler(const char *tag, jerry_value_t result)
-{
-    EOS_LOG_E("===================================");
-    jerry_value_t value = jerry_exception_value(result, false);
-    jerry_value_t final_str_val = value;
-    char stack_buf[SCRIPT_ERROR_STACK_BUF_SIZE];
-    char *buf = stack_buf;
-    bool need_free = false;
-
-    // If not string, convert to string
-    if (!(jerry_value_is_string(value)))
-    {
-        final_str_val = jerry_value_to_string(value);
-    }
-    // Get string length
-    jerry_size_t req_sz = jerry_string_size(final_str_val, JERRY_ENCODING_CESU8);
-    if (req_sz > 0)
-    {
-        if (req_sz >= sizeof(stack_buf))
-        {
-            buf = (char *)eos_malloc(req_sz + 1);
-            need_free = (buf != NULL);
-        }
-
-        if (buf)
-        {
-            jerry_string_to_buffer(final_str_val, JERRY_ENCODING_CESU8,
-                                   (jerry_char_t *)buf, req_sz);
-            buf[req_sz] = '\0';
-            EOS_LOG_E("%s Error: %s", tag, buf);
-            _set_error_info(buf);
-
-            if (need_free)
-            {
-                eos_free(buf);
-            }
-        }
-        else
-        {
-            EOS_LOG_E("malloc failed");
-            _set_error_info("malloc failed");
-        }
-    }
-    else
-    {
-        EOS_LOG_E("Unknown error");
-        _set_error_info("Unknown error");
-    }
-
-    jerry_value_free(final_str_val);
-
-    _extract_error_location_from_exception(value);
-    _log_backtrace();
-
-    jerry_value_free(value);
-    EOS_LOG_E("===================================");
-}
-/**
- * @brief Convert script_pkg_t to JS object (for JS to access script_info)
- */
-jerry_value_t _script_engine_create_info(const script_pkg_t *script_package)
-{
-    jerry_value_t obj = jerry_object();
-
-    script_engine_set_prop_string(obj, "id", script_package->id);
-    script_engine_set_prop_string(obj, "name", script_package->name);
-    script_engine_set_prop_string(obj, "version", script_package->version);
-    script_engine_set_prop_string(obj, "author", script_package->author);
-    script_engine_set_prop_string(obj, "description", script_package->description);
-
-    return obj;
-}
+/* ---- Manifest ---- */
 
 script_engine_result_t script_engine_get_manifest(const char *manifest_path, script_pkg_t *pkg)
 {
     if (!manifest_path || !pkg)
-    {
-        EOS_LOG_E("Invalid manifest_path or pkg pointer");
         return -SE_ERR_NULL_PACKAGE;
-    }
-
     char *manifest_json = eos_storage_read_file(manifest_path);
     if (!manifest_json)
     {
         EOS_LOG_E("Read manifest.json failed");
         return -SE_FAILED;
     }
-
     cJSON *root = cJSON_Parse(manifest_json);
     eos_free(manifest_json);
     if (!root)
-    {
-        EOS_LOG_E("parse error: %s\n", cJSON_GetErrorPtr());
         return -SE_FAILED;
-    }
-
     cJSON *id = cJSON_GetObjectItemCaseSensitive(root, "id");
     cJSON *name = cJSON_GetObjectItemCaseSensitive(root, "name");
     cJSON *version = cJSON_GetObjectItemCaseSensitive(root, "version");
     cJSON *author = cJSON_GetObjectItemCaseSensitive(root, "author");
     cJSON *description = cJSON_GetObjectItemCaseSensitive(root, "description");
-
-    if (!cJSON_IsString(id) || !id->valuestring ||
-        !cJSON_IsString(name) || !name->valuestring ||
-        !cJSON_IsString(version) || !version->valuestring ||
-        !cJSON_IsString(author) || !author->valuestring ||
-        !cJSON_IsString(description) || !description->valuestring)
+    if (!cJSON_IsString(id) || !id->valuestring || !cJSON_IsString(name) || !name->valuestring || !cJSON_IsString(version) || !version->valuestring || !cJSON_IsString(author) || !author->valuestring || !cJSON_IsString(description) || !description->valuestring)
     {
-        EOS_LOG_E("Manifest missing required fields");
         cJSON_Delete(root);
         return -SE_FAILED;
     }
-
-    // Free existing pointers (if any) to prevent memory leaks
     if (pkg->id)
         eos_free((void *)pkg->id);
     if (pkg->name)
@@ -1175,659 +988,332 @@ script_engine_result_t script_engine_get_manifest(const char *manifest_path, scr
         eos_free((void *)pkg->author);
     if (pkg->description)
         eos_free((void *)pkg->description);
-
-    // Allocate and assign values
     pkg->id = eos_strdup(id->valuestring);
     pkg->name = eos_strdup(name->valuestring);
     pkg->version = eos_strdup(version->valuestring);
     pkg->author = eos_strdup(author->valuestring);
     pkg->description = eos_strdup(description->valuestring);
-
     cJSON_Delete(root);
     return SE_OK;
 }
 
-void script_engine_register_functions(jerry_value_t parent,
-                                      const script_engine_func_entry_t *entries,
-                                      size_t funcs_count)
+/* ---- Run ---- */
+
+static jerry_value_t _script_engine_create_info(const script_pkg_t *pkg)
 {
-    for (size_t i = 0; i < funcs_count; ++i)
-    {
-        const char *class_name = entries[i].class_name;
-        const char *method_name = entries[i].method_name;
-
-        EOS_ASSERT(method_name != NULL);
-
-        jerry_value_t target_obj = parent;
-
-        // If class_name is specified, get or create the class object
-        if (class_name != NULL)
-        {
-            jerry_value_t class_key = jerry_string_sz(class_name);
-            jerry_value_t class_obj = jerry_object_get(parent, class_key);
-
-            if (jerry_value_is_undefined(class_obj))
-            {
-                // If class doesn't exist, create it and attach to parent
-                jerry_value_free(class_obj);
-                class_obj = jerry_object();
-                jerry_value_free(
-                    jerry_object_set(parent, class_key, class_obj));
-            }
-
-            jerry_value_free(class_key);
-            target_obj = class_obj; // Methods are attached under the class
-        }
-
-        // Create function
-        jerry_value_t fn = jerry_function_external(entries[i].handler);
-        jerry_value_t method_key = jerry_string_sz(method_name);
-
-        jerry_value_free(
-            jerry_object_set(target_obj, method_key, fn));
-
-        // Free resources
-        jerry_value_free(method_key);
-        jerry_value_free(fn);
-
-        if (class_name != NULL)
-        {
-            jerry_value_free(target_obj);
-        }
-    }
-}
-
-/**
- * @brief VM execution stop callback
- */
-static jerry_value_t _vm_exec_stop_callback(void *user_p)
-{
-    (void)user_p;
-
-    if (engine_ctx.state == SCRIPT_STATE_STOPPING)
-    {
-        EOS_LOG_D("Script execution stopped by request");
-        return jerry_string_sz("Script terminated by request");
-    }
-
-    if (engine_ctx.script_timeout_ms > 0 && engine_ctx.state == SCRIPT_STATE_RUNNING)
-    {
-        uint32_t elapsed = eos_tick_get() - engine_ctx.script_start_time;
-        if (elapsed >= engine_ctx.script_timeout_ms)
-        {
-            EOS_LOG_W("Script execution timeout (%u ms)", elapsed);
-            engine_ctx.stop_is_timeout = true;
-            _change_state(SCRIPT_STATE_STOPPING);
-            return jerry_string_sz("Script execution timeout");
-        }
-    }
-
-    return jerry_undefined();
-}
-
-script_state_t script_engine_get_state(void)
-{
-    return engine_ctx.state;
-}
-
-void script_engine_set_script_state(script_state_t state)
-{
-    _change_state(state);
-}
-
-char *script_engine_get_current_script_id(void)
-{
-    return engine_ctx.current_script ? engine_ctx.current_script->id : NULL;
-}
-
-char *script_engine_get_current_script_name(void)
-{
-    return engine_ctx.current_script ? engine_ctx.current_script->name : NULL;
-}
-
-script_pkg_type_t script_engine_get_current_script_type(void)
-{
-    return engine_ctx.current_script ? engine_ctx.current_script->type : SCRIPT_TYPE_UNKNOWN;
-}
-
-jerry_value_t script_engine_call(jerry_value_t func, jerry_value_t this_val, const jerry_value_t args_p[], const jerry_length_t args_count)
-{
-    script_state_t state = script_engine_get_state();
-    if (state != SCRIPT_STATE_RUNNING && state != SCRIPT_STATE_IDLE)
-    {
-        EOS_LOG_W("Script engine is in %d state, rejecting JS call", state);
-        return jerry_undefined();
-    }
-
-    bool was_suspended = (state == SCRIPT_STATE_IDLE);
-    if (was_suspended)
-    {
-        _change_state(SCRIPT_STATE_RUNNING);
-        if (engine_ctx.script_timeout_ms > 0)
-        {
-            engine_ctx.script_start_time = eos_tick_get();
-        }
-    }
-
-    jerry_value_t result = jerry_call(func, this_val, args_p, args_count);
-
-    // Check for exceptions during jerry_call
-    if (jerry_value_is_exception(result))
-    {
-        if (engine_ctx.state == SCRIPT_STATE_STOPPING)
-        {
-            if (engine_ctx.stop_is_timeout)
-            {
-                // Timeout error during jerry_call
-                EOS_LOG_W("Script call timeout");
-
-                // Handle script error
-                const char *script_id = engine_ctx.current_script ? engine_ctx.current_script->id : NULL;
-                eos_app_handle_script_error(EOS_SCRIPT_FAULT_UNRESPONSIVE, -SE_ERR_TIMEOUT, script_id, NULL);
-            }
-            else
-            {
-                EOS_LOG_D("Script call stopped by request");
-            }
-        }
-        else
-        {
-            // Handle exception during jerry_call
-            _script_engine_exception_handler("Jerry Call", result);
-            _change_state(SCRIPT_STATE_ERROR);
-
-            // Check if this is a timeout
-            eos_script_error_type_t error_type = EOS_SCRIPT_FAULT_ERROR_EXCEPTION;
-            const char *error_info = script_engine_get_error_info();
-            if (error_info && strstr(error_info, "timeout")) {
-                error_type = EOS_SCRIPT_FAULT_UNRESPONSIVE;
-            }
-
-            // Handle script error
-            const char *script_id = engine_ctx.current_script ? engine_ctx.current_script->id : NULL;
-            eos_app_handle_script_error(error_type, -SE_ERR_JERRY_EXCEPTION, script_id, NULL);
-        }
-    }
-
-    state = script_engine_get_state();
-    if (state == SCRIPT_STATE_RUNNING)
-    {
-        _change_state(SCRIPT_STATE_IDLE);
-    }
-
-    return result;
-}
-
-void script_engine_set_timeout(uint32_t timeout_ms)
-{
-    engine_ctx.script_timeout_ms = timeout_ms;
-}
-
-uint32_t script_engine_get_timeout(void)
-{
-    return engine_ctx.script_timeout_ms;
-}
-
-/**
- * @brief Clean up engine resources
- */
-static void _engine_cleanup(void)
-{
-    if (jerry_value_is_object(engine_ctx.old_realm))
-    {
-        jerry_value_free(jerry_set_realm(engine_ctx.old_realm));
-        engine_ctx.old_realm = jerry_undefined();
-    }
-
-    jerry_heap_gc(JERRY_GC_PRESSURE_LOW);
-}
-
-/**
- * @brief Stop and clean up script
- */
-static script_engine_result_t _script_engine_stop_and_cleanup(void)
-{
-    // Clean up resources
-    _engine_cleanup();
-
-    // Free script package
-    if (engine_ctx.current_script)
-    {
-        _script_pkg_destroy(engine_ctx.current_script);
-        engine_ctx.current_script = NULL;
-    }
-    engine_ctx.base_path = NULL;
-
-    _change_state(SCRIPT_STATE_STOPPED);
-    _collect_script_garbage();
-    _check_mem();
-    EOS_LOG_I("Script terminated successfully");
-
-    return SE_OK;
-}
-
-script_engine_result_t script_engine_stop(void)
-{
-    EOS_LOG_I("Stop script (sync)");
-    switch (engine_ctx.state)
-    {
-    case SCRIPT_STATE_STOPPED:
-        return SE_OK;
-
-    case SCRIPT_STATE_RUNNING:
-    case SCRIPT_STATE_IDLE:
-    case SCRIPT_STATE_ERROR:
-        return _script_engine_stop_and_cleanup();
-
-    case SCRIPT_STATE_SUSPENDED:
-        _context_list_destroy_all();
-        _change_state(SCRIPT_STATE_STOPPED);
-        return SE_OK;
-
-    case SCRIPT_STATE_STOPPING:
-        EOS_LOG_D("Script is already stopping, waiting...");
-        return _script_engine_stop_and_cleanup();
-
-    default:
-        EOS_LOG_W("Cannot stop from current state: %d", engine_ctx.state);
-        return -SE_ERR_INVALID_STATE;
-    }
-}
-
-script_engine_result_t script_engine_request_stop(void)
-{
-    EOS_LOG_I("Request stop script");
-    switch (engine_ctx.state)
-    {
-    case SCRIPT_STATE_STOPPED:
-        return SE_OK;
-
-    case SCRIPT_STATE_RUNNING:
-        engine_ctx.stop_is_timeout = false;
-        _change_state(SCRIPT_STATE_STOPPING);
-        eos_dispatcher_call((eos_dispatcher_cb_t)_script_engine_stop_and_cleanup, NULL);
-        return SE_OK;
-
-    case SCRIPT_STATE_STOPPING:
-        EOS_LOG_D("Script is already stopping");
-        return SE_OK;
-
-    case SCRIPT_STATE_IDLE:
-        EOS_LOG_D("Stopping from IDLE state");
-        return _script_engine_stop_and_cleanup();
-
-    case SCRIPT_STATE_SUSPENDED:
-        EOS_LOG_D("Stopping from SUSPENDED state");
-        return _script_engine_stop_and_cleanup();
-
-    case SCRIPT_STATE_ERROR:
-        EOS_LOG_D("Cleaning up from ERROR state");
-        return _script_engine_stop_and_cleanup();
-
-    default:
-        EOS_LOG_W("Cannot stop from current state: %d", engine_ctx.state);
-        return -SE_ERR_INVALID_STATE;
-    }
-}
-
-script_engine_result_t script_engine_init(void)
-{
-    if (engine_ctx.initialized)
-    {
-        EOS_LOG_E("Script engine already initialized");
-        return SE_ERR_ALREADY_INITIALIZED;
-    }
-
-    if (!jerry_feature_enabled(JERRY_FEATURE_VM_EXEC_STOP) ||
-        !jerry_feature_enabled(JERRY_FEATURE_REALM) ||
-        !jerry_feature_enabled(JERRY_FEATURE_MODULE))
-    {
-        EOS_LOG_E("Required JerryScript features not enabled");
-        return -SE_ERR_JERRY_INIT_FAIL;
-    }
-
-    if (!lv_is_initialized())
-    {
-        EOS_LOG_E("LVGL not initialized");
-        return -SE_ERR_NOT_INITIALIZED;
-    }
-
-    // Initialize JerryScript VM
-    jerry_init(SCRIPT_INIT_FLAGS);
-
-    // Initialize SNI and related functions
-    sni_init();
-
-    engine_ctx.initialized = true;
-    EOS_LOG_I("Script engine initialized successfully");
-    _check_mem();
-
-    return SE_OK;
+    jerry_value_t obj = jerry_object();
+    script_engine_set_prop_string(obj, "id", pkg->id);
+    script_engine_set_prop_string(obj, "name", pkg->name);
+    script_engine_set_prop_string(obj, "version", pkg->version);
+    script_engine_set_prop_string(obj, "author", pkg->author);
+    script_engine_set_prop_string(obj, "description", pkg->description);
+    return obj;
 }
 
 script_engine_result_t script_engine_run(const script_pkg_t *script_package)
 {
     if (!script_package || !script_package->script_str)
-    {
         return -SE_ERR_NULL_PACKAGE;
-    }
-
-    if (!engine_ctx.initialized)
+    if (!engine_rt.initialized)
     {
-        EOS_LOG_E("Script engine not initialized");
+        EOS_LOG_E("Not initialized");
         return -SE_ERR_NOT_INITIALIZED;
     }
-
-    // Check if current state allows running a new script
-    if (engine_ctx.state == SCRIPT_STATE_SUSPENDED)
+    if (engine_rt.state != SCRIPT_ENGINE_STATE_UNINITIALIZED && engine_rt.state != SCRIPT_ENGINE_STATE_IDLE)
     {
-        EOS_LOG_D("SUSPENDED state: running new script, preserved saved context");
-    }
-    else if (engine_ctx.state != SCRIPT_STATE_STOPPED &&
-             engine_ctx.state != SCRIPT_STATE_ERROR)
-    {
-        EOS_LOG_E("Cannot run script in current state: %d", engine_ctx.state);
+        EOS_LOG_E("Cannot run in state %d", engine_rt.state);
         return -SE_ERR_INVALID_STATE;
     }
 
-    script_pkg_t *owned_script = _script_pkg_clone(script_package);
-    if (!owned_script)
-    {
-        EOS_LOG_E("Failed to clone script package");
-        return -SE_ERR_MALLOC;
-    }
 
-    // Set the current script
-    engine_ctx.current_script = owned_script;
-    engine_ctx.script_start_time = eos_tick_get();
-    _change_state(SCRIPT_STATE_RUNNING);
+    _pkg_clone_into(&engine_rt.owned_script, script_package);
+    script_program_t *prog = _get_prog();
 
-    // Set base path
-    engine_ctx.base_path = engine_ctx.current_script->base_path ? engine_ctx.current_script->base_path : "/";
+    engine_rt.script_start_time = eos_tick_get();
+    _change_state(SCRIPT_ENGINE_STATE_RUNNING);
 
-    // Create a new realm
-    jerry_value_t new_realm = jerry_realm();
-    engine_ctx.old_realm = jerry_set_realm(new_realm);
+    jerry_value_t new_realm = _realm_create();
+    _realm_save_and_switch(new_realm);
 
-    // Mount APIs
     sni_mount(new_realm);
 
-    // Set stop callback and logging
     jerry_halt_handler(16, _vm_exec_stop_callback, NULL);
     jerry_log_set_level(JERRY_LOG_LEVEL_DEBUG);
 
-    // Set global script_info variable
     jerry_value_t global = jerry_current_realm();
-    jerry_value_t script_info = _script_engine_create_info(engine_ctx.current_script);
+    jerry_value_t script_info = _script_engine_create_info(script_package);
     jerry_value_t key = jerry_string_sz("scriptInfo");
     jerry_value_free(jerry_object_set(global, key, script_info));
     jerry_value_free(key);
     jerry_value_free(script_info);
     jerry_value_free(global);
 
-    // Register module import callback
     jerry_module_on_import(_module_import_cb, NULL);
 
-    // Parse and execute the script
     jerry_parse_options_t parse_options;
     parse_options.options = JERRY_PARSE_MODULE | JERRY_PARSE_HAS_SOURCE_NAME | JERRY_PARSE_HAS_USER_VALUE;
     parse_options.source_name = jerry_string_sz("main.js");
-    parse_options.user_value = jerry_string_sz(engine_ctx.base_path);
-
+    parse_options.user_value = jerry_string_sz(engine_rt.owned_script.base_path
+                                                   ? engine_rt.owned_script.base_path
+                                                   : "/");
     jerry_value_t parsed_code = jerry_parse(
-        (const jerry_char_t *)engine_ctx.current_script->script_str,
-        strlen(engine_ctx.current_script->script_str),
-        &parse_options);
-
+        (const jerry_char_t *)script_package->script_str,
+        strlen(script_package->script_str), &parse_options);
     jerry_value_free(parse_options.source_name);
     jerry_value_free(parse_options.user_value);
+    if (!jerry_value_is_exception(parsed_code))
+        _track_main_module(parsed_code);
 
-    // Free the script string
-    eos_free((void *)engine_ctx.current_script->script_str);
-    engine_ctx.current_script->script_str = NULL;
+    eos_free((void *)engine_rt.owned_script.script_str);
+    engine_rt.owned_script.script_str = NULL;
+
 
     script_engine_result_t result = SE_OK;
 
-    if (!jerry_value_is_exception(parsed_code))
+    if (jerry_value_is_exception(parsed_code))
     {
-        // Start linking module
-        EOS_LOG_I("Linking module");
+        _script_engine_exception_handler("Script Parse", parsed_code);
+        _change_state(SCRIPT_ENGINE_STATE_EXCEPTION);
+        result = -SE_ERR_INVALID_JS;
+    }
+    else
+    {
         jerry_value_t link_result = jerry_module_link(parsed_code, _module_resolve_cb, NULL);
-
         if (jerry_value_is_exception(link_result))
         {
-            EOS_LOG_E("Failed to link module");
+            jerry_value_t exc = jerry_exception_value(link_result, false);
+            jerry_char_t buf[256];
+            jerry_size_t sz = jerry_string_to_buffer(exc, JERRY_ENCODING_UTF8, buf, sizeof(buf) - 1);
+            buf[sz] = '\0';
+            jerry_value_free(exc);
+
+            EOS_LOG_E("Module Link Exception: %s", buf);
+
             _script_engine_exception_handler("Module Link", link_result);
-            _change_state(SCRIPT_STATE_ERROR);
+            _change_state(SCRIPT_ENGINE_STATE_EXCEPTION);
             jerry_value_free(link_result);
             result = -SE_ERR_JERRY_EXCEPTION;
-
-            // Handle script error
-            const char *script_id = engine_ctx.current_script ? engine_ctx.current_script->id : NULL;
-            eos_app_handle_script_error(EOS_SCRIPT_FAULT_ERROR_MODULE_LINK, result, script_id, NULL);
         }
         else
         {
             jerry_value_free(link_result);
-
-            EOS_LOG_I("Evaluating module");
             jerry_value_t run_result = jerry_module_evaluate(parsed_code);
-
             if (jerry_value_is_exception(run_result))
             {
-                if (engine_ctx.state == SCRIPT_STATE_STOPPING)
+                if (engine_rt.pending_stop)
                 {
-                    if (engine_ctx.stop_is_timeout)
-                    {
-                        // Timeout error
-                        EOS_LOG_W("Script execution timeout");
+                    if (engine_rt.stop_is_timeout)
                         result = -SE_ERR_TIMEOUT;
-
-                        // Handle script error
-                        const char *script_id = engine_ctx.current_script ? engine_ctx.current_script->id : NULL;
-                        eos_app_handle_script_error(EOS_SCRIPT_FAULT_UNRESPONSIVE, result, script_id, NULL);
-                    }
                     else
-                    {
-                        // Exception caused by requested stop; handle as normal
-                        EOS_LOG_D("Script stopped by request");
                         result = SE_OK;
-                    }
                 }
                 else
                 {
-                    // Execution error
                     _script_engine_exception_handler("Script Runtime", run_result);
-                    _change_state(SCRIPT_STATE_ERROR);
+                    _change_state(SCRIPT_ENGINE_STATE_EXCEPTION);
                     result = -SE_ERR_JERRY_EXCEPTION;
-
-                    // Check if this is a timeout
-                    eos_script_error_type_t error_type = EOS_SCRIPT_FAULT_ERROR_EXCEPTION;
-                    const char *error_info = script_engine_get_error_info();
-                    if (error_info && strstr(error_info, "timeout")) {
-                        error_type = EOS_SCRIPT_FAULT_UNRESPONSIVE;
-                    }
-
-                    // Handle script error
-                    const char *script_id = engine_ctx.current_script ? engine_ctx.current_script->id : NULL;
-                    eos_app_handle_script_error(error_type, result, script_id, NULL);
                 }
             }
             else
             {
-                // Execution succeeded
-                if (engine_ctx.state == SCRIPT_STATE_RUNNING)
-                {
-                    _change_state(SCRIPT_STATE_IDLE);
-                }
+                if (engine_rt.state == SCRIPT_ENGINE_STATE_RUNNING)
+                    _change_state(SCRIPT_ENGINE_STATE_IDLE);
                 eos_event_post(EOS_EVENT_SCRIPT_STARTED, NULL, NULL);
-                result = SE_OK;
             }
-
             jerry_value_free(run_result);
         }
     }
-    else
-    {
-        // Parse error
-        _script_engine_exception_handler("Script Parse", parsed_code);
-        _change_state(SCRIPT_STATE_ERROR);
-        result = -SE_ERR_INVALID_JS;
+    _process_module_queue();
+    jerry_value_free(jerry_run_jobs());
+    _cleanup_module_queue();
 
-        // Handle script error
-        const char *script_id = engine_ctx.current_script ? engine_ctx.current_script->id : NULL;
-        eos_app_handle_script_error(EOS_SCRIPT_FAULT_ERROR_PARSE, result, script_id, NULL);
+    if (prog)
+    {
+        _realm_assign_to_program(prog, new_realm);
     }
 
+    /*
+     * Release the parsed_code reference. The tracked copy (from
+     * _track_main_module with jerry_value_copy) is kept for cleanup
+     * at stop time.
+     */
     jerry_value_free(parsed_code);
 
-    // Process module queue
-    _process_module_queue();
+    /*
+     * Do NOT release tracked modules here. The module must remain alive
+     * for the duration of the script's execution, as callbacks (timers,
+     * animations, etc.) may still reference functions defined in the module.
+     *
+     * Modules are released in _script_engine_stop_and_cleanup() when the
+     * script is terminated.
+     */
 
-    // Run promise jobs
-    EOS_LOG_D("Running promise jobs...");
-    jerry_value_free(jerry_run_jobs());
+    jerry_heap_gc(JERRY_GC_PRESSURE_HIGH);
 
-    // Clean up module queue
+    /*
+     * Always clean up realm, program reference, and module queue,
+     * regardless of success or failure. This prevents resource leaks
+     * and stale references between script runs.
+     */
+    _realm_restore_and_cleanup();
+    _realm_release_program(prog);
     _cleanup_module_queue();
-    jerry_module_cleanup(jerry_undefined());
 
-    // If execution failed or script was stopped, clean up resources
-    if ((result != SE_OK && engine_ctx.state == SCRIPT_STATE_ERROR) ||
-        engine_ctx.state == SCRIPT_STATE_STOPPING)
+    if (result != SE_OK || engine_rt.pending_stop)
     {
-        _engine_cleanup();
-        if (engine_ctx.current_script)
-        {
-            _script_pkg_destroy(engine_ctx.current_script);
-            engine_ctx.current_script = NULL;
-        }
-        engine_ctx.base_path = NULL;
-        _change_state(SCRIPT_STATE_STOPPED);
+        _collect_script_garbage();
+        _change_state(SCRIPT_ENGINE_STATE_IDLE);
+        jerry_module_cleanup(jerry_undefined());
         _collect_script_garbage();
     }
 
-    // Reset stop_is_timeout flag
-    engine_ctx.stop_is_timeout = false;
-
+    engine_rt.stop_is_timeout = false;
+    engine_rt.pending_stop = false;
     return result;
 }
 
+/* ---- Stop / Cleanup ---- */
+
+static void _engine_cleanup(void)
+{
+    _realm_restore_and_cleanup();
+    _pkg_free(&engine_rt.owned_script);
+    memset(&engine_rt.owned_script, 0, sizeof(engine_rt.owned_script));
+}
+
+static script_engine_result_t _script_engine_stop_and_cleanup(void)
+{
+    EOS_LOG_I("Script stop cleanup: state=%d prog=%p", engine_rt.state, (void *)_get_prog());
+    script_program_t *prog = _get_prog();
+
+
+    _collect_script_garbage();
+    _check_mem();
+
+    _engine_cleanup();
+    _realm_release_program(prog);
+
+    _cleanup_module_queue();
+
+    _release_all_tracked_modules();
+
+    for (int i = 0; i < 3; i++)
+        jerry_heap_gc(JERRY_GC_PRESSURE_HIGH);
+
+    jerry_module_cleanup(jerry_undefined());
+
+    engine_rt.pending_stop = false;
+    _change_state(SCRIPT_ENGINE_STATE_IDLE);
+
+    _collect_script_garbage();
+
+    for (int i = 0; i < 3; i++)
+        jerry_heap_gc(JERRY_GC_PRESSURE_HIGH);
+
+    _check_mem();
+    EOS_LOG_I("Script terminated");
+    return SE_OK;
+}
+
+script_engine_result_t script_engine_stop(void)
+{
+    EOS_LOG_I("Stop script (sync) state=%d", engine_rt.state);
+    switch (engine_rt.state)
+    {
+    case SCRIPT_ENGINE_STATE_UNINITIALIZED:
+        return SE_OK;
+    case SCRIPT_ENGINE_STATE_RUNNING:
+    case SCRIPT_ENGINE_STATE_IDLE:
+    case SCRIPT_ENGINE_STATE_EXCEPTION:
+        return _script_engine_stop_and_cleanup();
+    default:
+        return -SE_ERR_INVALID_STATE;
+    }
+}
+
+script_engine_result_t script_engine_request_stop(void)
+{
+    EOS_LOG_I("Request stop script state=%d", engine_rt.state);
+    switch (engine_rt.state)
+    {
+    case SCRIPT_ENGINE_STATE_UNINITIALIZED:
+        return SE_OK;
+    case SCRIPT_ENGINE_STATE_RUNNING:
+        engine_rt.stop_is_timeout = false;
+        engine_rt.pending_stop = true;
+        eos_dispatcher_call((eos_dispatcher_cb_t)_script_engine_stop_and_cleanup, NULL);
+        return SE_OK;
+    case SCRIPT_ENGINE_STATE_IDLE:
+    case SCRIPT_ENGINE_STATE_EXCEPTION:
+        return _script_engine_stop_and_cleanup();
+    default:
+        return -SE_ERR_INVALID_STATE;
+    }
+}
+
+script_engine_result_t script_engine_clean_up(void)
+{
+    if (engine_rt.state != SCRIPT_ENGINE_STATE_UNINITIALIZED)
+        script_engine_request_stop();
+    _cleanup_module_queue();
+    jerry_module_cleanup(jerry_undefined());
+    jerry_cleanup();
+    engine_rt.initialized = false;
+    _change_state(SCRIPT_ENGINE_STATE_UNINITIALIZED);
+    return SE_OK;
+}
+
+/* ---- Reload ---- */
+
 script_engine_result_t script_engine_reload_current_script(void)
 {
-    if (!engine_ctx.initialized)
-    {
-        EOS_LOG_E("Script engine not initialized");
+    if (!engine_rt.initialized)
         return -SE_ERR_NOT_INITIALIZED;
-    }
-
-    if (!engine_ctx.current_script)
-    {
-        EOS_LOG_E("No running script to reload");
+    const script_pkg_t *p = _get_pkg();
+    if (!p || !p->id || !p->base_path)
         return -SE_ERR_SCRIPT_NOT_RUNNING;
-    }
-
-    if (!(engine_ctx.current_script->id && engine_ctx.current_script->base_path))
+    script_engine_state_t state = engine_rt.state;
+    if (state != SCRIPT_ENGINE_STATE_UNINITIALIZED)
     {
-        EOS_LOG_E("Current script metadata is incomplete");
-        return -SE_FAILED;
-    }
-
-    const char *base_path = eos_strdup(engine_ctx.current_script->base_path);
-    if (!base_path)
-    {
-        return -SE_ERR_MALLOC;
-    }
-
-    script_state_t state = script_engine_get_state();
-    if (state == SCRIPT_STATE_RUNNING ||
-        state == SCRIPT_STATE_IDLE ||
-        state == SCRIPT_STATE_SUSPENDED ||
-        state == SCRIPT_STATE_ERROR)
-    {
-        script_engine_result_t stop_ret = script_engine_request_stop();
-        if (stop_ret != SE_OK && script_engine_get_state() != SCRIPT_STATE_STOPPED)
-        {
-            EOS_LOG_E("Failed to stop current script before reload: %d", stop_ret);
-            eos_free((void *)base_path);
-            return stop_ret;
-        }
+        script_engine_result_t sr = script_engine_request_stop();
+        if (sr != SE_OK && engine_rt.state != SCRIPT_ENGINE_STATE_UNINITIALIZED)
+            return sr;
     }
 
     script_pkg_t pkg = {0};
-    pkg.type = engine_ctx.current_script->type;
-
-    const char *manifest_file_name = NULL;
-    const char *entry_file_name = NULL;
-    switch (pkg.type)
-    {
-    case SCRIPT_TYPE_APPLICATION:
-        manifest_file_name = EOS_APP_MANIFEST_FILE_NAME;
-        entry_file_name = EOS_APP_SCRIPT_ENTRY_FILE_NAME;
-        break;
-    case SCRIPT_TYPE_WATCHFACE:
-        manifest_file_name = EOS_WATCHFACE_MANIFEST_FILE_NAME;
-        entry_file_name = EOS_WATCHFACE_SCRIPT_ENTRY_FILE_NAME;
-        break;
-    default:
-        EOS_LOG_E("Current script type does not support reload: %d", pkg.type);
-        eos_free((void *)base_path);
-        return -SE_ERR_INVALID_STATE;
-    }
-
+    pkg.type = p->type;
+    const char *mf = (pkg.type == SCRIPT_TYPE_APPLICATION)
+                         ? EOS_APP_MANIFEST_FILE_NAME
+                         : EOS_WATCHFACE_MANIFEST_FILE_NAME;
+    const char *ef = (pkg.type == SCRIPT_TYPE_APPLICATION)
+                         ? EOS_APP_SCRIPT_ENTRY_FILE_NAME
+                         : EOS_WATCHFACE_SCRIPT_ENTRY_FILE_NAME;
+    char base_path_buf[EOS_FS_PATH_MAX];
+    snprintf(base_path_buf, sizeof(base_path_buf), "%s", p->base_path);
     char manifest_path[EOS_FS_PATH_MAX];
-    snprintf(manifest_path, sizeof(manifest_path), "%s%s", base_path, manifest_file_name);
+    snprintf(manifest_path, sizeof(manifest_path), "%s%s", base_path_buf, mf);
     if (script_engine_get_manifest(manifest_path, &pkg) != SE_OK)
-    {
-        EOS_LOG_E("Read manifest failed: %s", manifest_path);
-        eos_free((void *)base_path);
         return -SE_FAILED;
-    }
-
     char script_path[EOS_FS_PATH_MAX];
-    snprintf(script_path, sizeof(script_path), "%s%s", base_path, entry_file_name);
-    pkg.base_path = base_path;
-
+    snprintf(script_path, sizeof(script_path), "%s%s", base_path_buf, ef);
+    pkg.base_path = eos_strdup(base_path_buf);
     if (!eos_storage_is_file(script_path))
     {
-        EOS_LOG_E("Can't find script: %s", script_path);
         eos_pkg_free(&pkg);
         return -SE_FAILED;
     }
-
     pkg.script_str = eos_storage_read_file(script_path);
     if (!pkg.script_str)
     {
-        EOS_LOG_E("Failed to read script: %s", script_path);
         eos_pkg_free(&pkg);
         return -SE_FAILED;
     }
-
     script_engine_result_t run_ret = script_engine_run(&pkg);
     eos_pkg_free(&pkg);
-
     return run_ret;
 }
 
 script_engine_result_t script_engine_reload_current_app(void)
 {
     return script_engine_reload_current_script();
-}
-
-script_engine_result_t script_engine_clean_up(void)
-{
-    if (engine_ctx.state != SCRIPT_STATE_STOPPED)
-    {
-        script_engine_request_stop();
-    }
-
-    // Clean up module queue
-    _cleanup_module_queue();
-    jerry_module_cleanup(jerry_undefined());
-
-    jerry_cleanup();
-    engine_ctx.initialized = false;
-    _change_state(SCRIPT_STATE_STOPPED);
-
-    return SE_OK;
 }

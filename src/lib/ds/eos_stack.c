@@ -168,3 +168,13 @@ void eos_stack_destroy(eos_stack_t *stack)
 	eos_free(stack->buffer);
 	eos_free(stack);
 }
+
+void *eos_stack_get_at(eos_stack_t *stack, size_t index)
+{
+	EOS_CHECK_PTR_RETURN_VAL(stack, NULL);
+	if (index >= stack->size)
+	{
+		return NULL;
+	}
+	return stack->buffer[index];
+}

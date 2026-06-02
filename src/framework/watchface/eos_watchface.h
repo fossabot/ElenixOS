@@ -19,7 +19,7 @@ extern "C" {
 #include "eos_storage_paths.h"
 #include "lvgl.h"
 #include "eos_activity.h"
-#include "script_engine_manager.h"
+#include "script_engine_core.h"
 /* Public macros ----------------------------------------------*/
 #define EOS_WATCHFACE_DATA_DIR EOS_WATCHFACE_DIR "wf_data/"
 #define EOS_WATCHFACE_BUILTIN_FALLBACK_ID "builtin.fallback"

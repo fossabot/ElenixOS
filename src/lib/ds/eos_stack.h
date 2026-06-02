@@ -85,6 +85,14 @@ eos_stack_capacity_mode_t eos_stack_get_capacity_mode(eos_stack_t *stack);
  */
 void eos_stack_destroy(eos_stack_t *stack);
 
+/**
+ * @brief Get element at specified index (0 = bottom, size-1 = top)
+ * @param stack Stack pointer
+ * @param index Element index (0-based from bottom)
+ * @return void* Element pointer at index, returns NULL if index out of bounds or parameter invalid
+ */
+void *eos_stack_get_at(eos_stack_t *stack, size_t index);
+
 #ifdef __cplusplus
 }
 #endif

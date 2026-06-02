@@ -1,7 +1,13 @@
 /**
  * @file script_engine_core.h
- * @brief Application system external interface definition
+ * @brief Script Engine Core — "how to run JS"
+ *
+ * Core is responsible ONLY for: JerryScript VM lifecycle, Realm
+ * create/destroy/switch, JS bytecode parse/execute, module import,
+ * timeout detection. It knows NOTHING about Activity, View, WatchFace,
+ * Application, or program lifecycle. Those belong to SPM.
  */
+
 #ifndef SCRIPT_ENGINE_CORE_H
 #define SCRIPT_ENGINE_CORE_H
 
@@ -17,328 +23,163 @@ extern "C" {
 
 /* Public macros ----------------------------------------------*/
 
+#ifndef SNI_CONTEXT_MAX_COUNT
+#define SNI_CONTEXT_MAX_COUNT 2
+#endif
+
 /* Public typedefs --------------------------------------------*/
+
 /**
- * @brief Script running state
+ * @brief Engine execution-window state — NOT program lifecycle
  */
 typedef enum {
-    SCRIPT_STATE_STOPPED,      /**< Stopped: script has stopped and released resources */
-    SCRIPT_STATE_RUNNING,      /**< Running: script is running */
-    SCRIPT_STATE_IDLE,         /**< Idle: main script finished, callbacks allowed */
-    SCRIPT_STATE_SUSPENDED,    /**< Suspended: context saved, engine idle */
-    SCRIPT_STATE_STOPPING,     /**< Stopping: script is being stopped */
-    SCRIPT_STATE_ERROR,        /**< Error: script execution error */
-} script_state_t;
+    SCRIPT_ENGINE_STATE_UNINITIALIZED,
+    SCRIPT_ENGINE_STATE_IDLE,
+    SCRIPT_ENGINE_STATE_RUNNING,
+    SCRIPT_ENGINE_STATE_EXCEPTION,
+} script_engine_state_t;
 
-/**
- * @brief Script package type
- */
-typedef enum{
-    SCRIPT_TYPE_UNKNOWN=0,
-    SCRIPT_TYPE_APPLICATION=1,
-    SCRIPT_TYPE_WATCHFACE=2
-}script_pkg_type_t;
+typedef enum {
+    SCRIPT_TYPE_UNKNOWN = 0,
+    SCRIPT_TYPE_APPLICATION = 1,
+    SCRIPT_TYPE_WATCHFACE = 2,
+} script_pkg_type_t;
 
-/**
- * @brief Function entry link structure
- */
 typedef struct {
-    const char* class_name;
-    const char* method_name;
+    const char *class_name;
+    const char *method_name;
     jerry_external_handler_t handler;
 } script_engine_func_entry_t;
 
-/**
- * @brief Script package description structure
- */
 typedef struct {
-    const char* id;               /**< Application unique ID, e.g., "com.mydev.clock" */
-    const char* name;             /**< Application display name, e.g., "Clock" */
-    script_pkg_type_t type;       /**< Script type, e.g., SCRIPT_TYPE_APPLICATION */
-    const char* version;          /**< Application version, e.g., "1.0.2" */
-    const char* author;           /**< Developer name */
-    const char* description;      /**< Brief description */
-    const char* script_str;       /**< Main JS script string (UTF-8) */
-    const char* base_path;        /**< Script base path, used to resolve relative path module imports */
+    const char *id;
+    const char *name;
+    script_pkg_type_t type;
+    const char *version;
+    const char *author;
+    const char *description;
+    const char *script_str;
+    const char *base_path;
 } script_pkg_t;
 
-/**
- * @brief Script runtime context
- *
- * Stores a saved script execution context (realm + metadata).
- * Managed via doubly-linked list in the engine core.
- * Pointer to this struct serves as the unique handle.
- */
-typedef struct script_runtime_context {
-    struct script_runtime_context *next;  /**< Next node in doubly-linked list */
-    struct script_runtime_context *prev;  /**< Previous node in doubly-linked list */
-
-    bool is_valid;                        /**< Whether this context holds valid saved data */
-    char owner_id[256];                   /**< Owner identifier (e.g. watchface ID) */
-    script_pkg_type_t owner_type;         /**< Owner script type */
-
-    jerry_value_t realm;                  /**< Saved JS realm */
-    jerry_value_t old_realm;              /**< Previous realm before entering saved realm */
-
-    script_pkg_t *script;                 /**< Saved script metadata (pkg without script_str) */
-    char *base_path;                      /**< Saved base path */
-
-    uint32_t generation;                  /**< Generation counter for debugging */
-} script_runtime_context_t;
-
-/**
- * @brief Script error location structure
- */
-typedef struct
-{
-    char source_name[128]; /**< Source file name */
-    uint32_t line;         /**< Line number */
-    uint32_t column;       /**< Column number */
+typedef struct {
+    char source_name[128];
+    uint32_t line;
+    uint32_t column;
 } script_error_location_t;
 
-/**
- * @brief Script engine running result
- */
 typedef enum {
-    SE_OK = 0,                   /**< Startup successful */
+    SE_OK = 0,
     SE_FAILED,
-    SE_ERR_NULL_PACKAGE,         /**< Incoming package pointer is null */
-    SE_ERR_INVALID_JS,           /**< JS script is invalid (syntax error, empty string, etc.) */
-    SE_ERR_JERRY_EXCEPTION,      /**< JS exception thrown during operation */
-    SE_ERR_ALREADY_RUNNING,      /**< There is already an APP running */
-    SE_ERR_JERRY_INIT_FAIL,      /**< JerryScript initialization failed */
-    SE_ERR_NOT_INITIALIZED,      /**< Not initialized */
-    SE_ERR_SCRIPT_NOT_RUNNING,   /**< No application running */
-    SE_ERR_BUSY,                 /**< Busy */
-    SE_ERR_VAR_NULL,             /**< Value is null */
-    SE_ERR_ALREADY_INITIALIZED,  /**< Already initialized */
-    SE_ERR_STACK_EMPTY,          /**< Stack empty */
-    SE_ERR_MALLOC,               /**< Memory allocation error */
-    SE_ERR_INVALID_STATE,        /**< Invalid state */
-    SE_ERR_TIMEOUT,              /**< Script execution timeout */
-    SE_ERR_NO_SAVED_CONTEXT,     /**< No saved context available */
-    SE_ERR_UNKNOWN               /**< Unknown error */
+    SE_ERR_NULL_PACKAGE,
+    SE_ERR_INVALID_JS,
+    SE_ERR_JERRY_EXCEPTION,
+    SE_ERR_ALREADY_RUNNING,
+    SE_ERR_JERRY_INIT_FAIL,
+    SE_ERR_NOT_INITIALIZED,
+    SE_ERR_SCRIPT_NOT_RUNNING,
+    SE_ERR_BUSY,
+    SE_ERR_VAR_NULL,
+    SE_ERR_ALREADY_INITIALIZED,
+    SE_ERR_STACK_EMPTY,
+    SE_ERR_MALLOC,
+    SE_ERR_INVALID_STATE,
+    SE_ERR_TIMEOUT,
+    SE_ERR_NO_SAVED_CONTEXT,
+    SE_ERR_UNKNOWN
 } script_engine_result_t;
 
-/**
- * @brief Script error type enumeration
- */
 typedef enum {
-    EOS_SCRIPT_FAULT_ERROR_UNKNOWN = 0,   /**< Unknown error */
-    EOS_SCRIPT_FAULT_ERROR_EXCEPTION,     /**< Script execution exception */
-    EOS_SCRIPT_FAULT_UNRESPONSIVE,        /**< Script execution timeout/unresponsive */
-    EOS_SCRIPT_FAULT_ERROR_PARSE,         /**< Script parse error */
-    EOS_SCRIPT_FAULT_ERROR_MODULE_LINK,   /**< Module link error */
+    EOS_SCRIPT_FAULT_ERROR_UNKNOWN = 0,
+    EOS_SCRIPT_FAULT_ERROR_EXCEPTION,
+    EOS_SCRIPT_FAULT_UNRESPONSIVE,
+    EOS_SCRIPT_FAULT_ERROR_PARSE,
+    EOS_SCRIPT_FAULT_ERROR_MODULE_LINK,
 } eos_script_error_type_t;
+
+/**
+ * @brief SPM program handle — opaque to Core, owned by SPM
+ */
+struct script_program;
+typedef struct script_program script_program_t;
 
 /* Public function prototypes --------------------------------*/
 
-/** @name Core Lifecycle APIs */
+/** @name Core Lifecycle */
 /**@{*/
-/**
- * @brief Initialize script engine
- * @return script_engine_result_t
- */
 script_engine_result_t script_engine_init(void);
-
-/**
- * @brief Run specified script
- * @param script_package Script package (read-only borrow, function internally deep copies and manages its lifecycle)
- * @return script_engine_result_t Return operation result
- */
-script_engine_result_t script_engine_run(const script_pkg_t* script_package);
-
-/**
- * @brief Stop currently running script synchronously
- * @return script_engine_result_t
- */
 script_engine_result_t script_engine_stop(void);
-
-/**
- * @brief Request async stop of currently running script
- * @return script_engine_result_t
- */
 script_engine_result_t script_engine_request_stop(void);
-
-/**
- * @brief Clean up and shutdown the script engine
- * @return script_engine_result_t
- */
 script_engine_result_t script_engine_clean_up(void);
 /**@}*/
 
-/** @name Context Save/Restore APIs */
+/** @name Run — SPM sets current_program before calling this */
 /**@{*/
 /**
- * @brief Create a new runtime context handle
- * @return script_runtime_context_t* Context pointer (NULL on failure)
- */
-script_runtime_context_t *script_runtime_context_create(void);
-
-/**
- * @brief Destroy a runtime context and free its resources
- * @param ctx Context handle to destroy
- * @return script_engine_result_t
- */
-script_engine_result_t script_runtime_context_destroy(script_runtime_context_t *ctx);
-
-/**
- * @brief Save current engine runtime into the given context
- * @param ctx Target context handle to save into
- * @return script_engine_result_t
+ * @brief Execute script for the given SPM program
  *
- * Transfers the current realm and script state into the context.
- * Engine transitions to SUSPENDED state.
- * Only valid from IDLE state.
+ * SPM MUST call script_engine_set_current_program() before this call.
+ * Core copies the program's script_pkg_t internally and writes back
+ * creado sni_ctx and realm into the program.
  */
-script_engine_result_t script_runtime_context_save(script_runtime_context_t *ctx);
+script_engine_result_t script_engine_run(const script_pkg_t *script_package);
 
 /**
- * @brief Restore engine runtime from the given context
- * @param ctx Source context handle to restore from
- * @return script_engine_result_t
- *
- * Transfers the saved realm and script state back into the engine.
- * Engine transitions to IDLE state.
- * Only valid from SUSPENDED state.
+ * @brief Set/clear the SPM program that Core is working for
+ * @param prog Program pointer (SPM-owned, not freed by Core), NULL to clear
  */
-script_engine_result_t script_runtime_context_restore(script_runtime_context_t *ctx);
+void script_engine_set_current_program(script_program_t *prog);
+script_program_t *script_engine_get_current_program(void);
 /**@}*/
 
-/** @name Info & Query APIs */
+/** @name State & Error */
 /**@{*/
-/**
- * @brief Get script engine current state
- * @return script_state_t State
- */
-script_state_t script_engine_get_state(void);
-
-/**
- * @brief Get last run error information
- * @return const char* Error message string
- */
+script_engine_state_t script_engine_get_state(void);
 const char *script_engine_get_error_info(void);
-
-/**
- * @brief Get error location information from last error
- * @return const script_error_location_t* Pointer to error location structure
- */
 const script_error_location_t *script_engine_get_error_location(void);
-
-/**
- * @brief Get error backtrace from last error
- * @param count Pointer to store backtrace frame count (can be NULL)
- * @return const script_error_location_t* Pointer to backtrace array
- */
 const script_error_location_t *script_engine_get_error_backtrace(uint32_t *count);
-
-/**
- * @brief Get the number of backtrace frames from last error
- * @return uint32_t Number of backtrace frames
- */
 uint32_t script_engine_get_backtrace_count(void);
-
-/**
- * @brief Get current running script ID
- * @return char* ID string
- */
 char *script_engine_get_current_script_id(void);
-
-/**
- * @brief Get current running script name
- * @return char* Name string
- */
 char *script_engine_get_current_script_name(void);
-
-/**
- * @brief Get current running script type
- * @return script_pkg_type_t
- */
 script_pkg_type_t script_engine_get_current_script_type(void);
-
-/**
- * @brief Get script execution timeout
- * @return uint32_t Timeout in milliseconds
- */
 uint32_t script_engine_get_timeout(void);
+void script_engine_set_timeout(uint32_t timeout_ms);
 /**@}*/
 
-/** @name JavaScript Interaction APIs */
+/** @name JS Interaction */
 /**@{*/
-/**
- * @brief Throw error
- * @param message Error content
- * @return jerry_value_t Error object
- */
 jerry_value_t script_engine_throw_error(const char *message);
+void script_engine_register_functions(jerry_value_t parent,
+    const script_engine_func_entry_t *entry, const size_t funcs_count);
 
 /**
- * @brief Register C functions to JS
- * @param parent Parent object
- * @param entry Function entry array; if class_name == NULL, then directly register handler to parent
- * @param funcs_count Array length
+ * @brief Raw jerry_call — for SPM's spm_call() only.
+ * SPM must validate program state before calling.
  */
-void script_engine_register_functions(jerry_value_t parent, const script_engine_func_entry_t *entry, const size_t funcs_count);
+jerry_value_t script_engine_call_raw(jerry_value_t func, jerry_value_t this_val,
+    const jerry_value_t args_p[], const jerry_length_t args_count);
+/**@}*/
 
-/**
- * @brief Call a JavaScript function with engine state check
- * @param func Function to call
- * @param this_val Value of 'this' keyword
- * @param args_p Array of argument values
- * @param args_count Number of arguments
- * @return jerry_value_t Function result, or undefined if engine is stopping/stopped
- */
-jerry_value_t script_engine_call(jerry_value_t func, jerry_value_t this_val, const jerry_value_t args_p[], const jerry_length_t args_count);
-
-/**
- * @brief Set script execution timeout
- * @param timeout_ms Timeout in milliseconds, 0 means no timeout
- */
-void script_engine_set_timeout(uint32_t timeout_ms);
-
-/**
- * @brief Set script running state
- * @param state script_state_t
- */
-void script_engine_set_script_state(script_state_t state);
-
-/** @name Property Setter Helpers */
+/** @name Property Helpers */
 /**@{*/
 extern inline void script_engine_set_prop_number(jerry_value_t obj,
-                                    const char* prop_name,
-                                    double value);
-
+    const char *prop_name, double value);
 extern inline void script_engine_set_prop_bool(jerry_value_t obj,
-                                    const char* prop_name,
-                                    bool value);
-
+    const char *prop_name, bool value);
 extern inline void script_engine_set_prop_string(jerry_value_t obj,
-                                    const char* prop_name,
-                                    const char* value);
+    const char *prop_name, const char *value);
 /**@}*/
 
-/** @name Reload APIs */
+/** @name Reload */
 /**@{*/
-/**
- * @brief Reload current running script code from disk and run it again
- * @return script_engine_result_t
- */
 script_engine_result_t script_engine_reload_current_script(void);
-
-/**
- * @brief Reload current running application script code from disk and run it again
- * @return script_engine_result_t
- */
 script_engine_result_t script_engine_reload_current_app(void);
 /**@}*/
 
-/**
- * @brief Get manifest.json and fill script_pkg_t structure
- * @param manifest_path manifest.json file path
- * @param pkg Target structure pointer
- * @return script_engine_result_t
- */
+/** @name Manifest */
+/**@{*/
 script_engine_result_t script_engine_get_manifest(const char *manifest_path, script_pkg_t *pkg);
+/**@}*/
 
 #ifdef __cplusplus
 }

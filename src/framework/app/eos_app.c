@@ -15,7 +15,7 @@
 #include "eos_log.h"
 #include "eos_pkg_mgr.h"
 #include "eos_event.h"
-#include "script_engine_manager.h"
+#include "script_engine_core.h"
 #include "cJSON.h"
 #include "eos_app_list.h"
 #include "eos_service_storage.h"
@@ -30,6 +30,8 @@
 #include "eos_panel.h"
 #include "eos_fault_panel.h"
 #include "eos_font.h"
+#include "sni_callback_runtime.h"
+#include "spm.h"
 
 /* Macros and Definitions -------------------------------------*/
 #define EOS_APP_LIST_DEFAULT_CAPACITY 1 // 列表默认容量大小
@@ -629,18 +631,36 @@ void eos_app_handle_script_error(eos_script_error_type_t error_type,
         .cancel_cb = cfg && cfg->button_callback ? cfg->button_callback : NULL,
     };
 
-    eos_fault_panel_t *fault_panel = eos_fault_panel_create(&fault_cfg);
+    eos_activity_t *current = eos_activity_get_current();
+    if (!current)
+    {
+        EOS_LOG_E("No current activity for fault panel");
+        return;
+    }
+
+    eos_fault_panel_t *old_fp = (eos_fault_panel_t *)eos_activity_get_fault_panel(current);
+    if (old_fp)
+    {
+        EOS_LOG_W("Replacing existing fault panel on activity");
+        eos_fault_panel_delete(old_fp);
+        eos_activity_set_fault_panel(current, NULL);
+    }
+
+    eos_fault_panel_t *fault_panel = eos_fault_panel_create_on_activity(current, &fault_cfg);
     if (!fault_panel)
     {
         EOS_LOG_E("Failed to create fault panel");
         return;
     }
 
+    eos_activity_set_fault_panel(current, fault_panel);
+
     lv_obj_t *extra_slot = eos_fault_panel_get_extra_slot(fault_panel);
     if (extra_slot)
     {
         char info_str[256];
-        const char *error_info = script_engine_get_error_info();
+            const spm_error_t *last_error = spm_get_last_error();
+            const char *error_info = last_error ? last_error->error_info : script_engine_get_error_info();
         if (error_info && error_info[0] != '\0') {
             snprintf(info_str, sizeof(info_str),
                      "Code: %d\nID: %s\nErrorType: %s\nError: %s",
@@ -663,10 +683,44 @@ void eos_app_handle_script_error(eos_script_error_type_t error_type,
         lv_obj_set_style_text_color(err_label, EOS_COLOR_GREY_1, 0);
         eos_label_set_font_size(err_label, EOS_FONT_SIZE_SMALL);
 
-        uint32_t backtrace_count = script_engine_get_backtrace_count();
+            const script_error_location_t *error_location = NULL;
+            uint32_t backtrace_count = 0;
+            const script_error_location_t *backtrace = NULL;
+
+            if (last_error)
+            {
+                error_location = &last_error->error_location;
+                backtrace_count = last_error->backtrace_count;
+                backtrace = last_error->backtrace;
+            }
+            else
+            {
+                error_location = script_engine_get_error_location();
+                backtrace_count = script_engine_get_backtrace_count();
+                if (backtrace_count > 0)
+                {
+                    backtrace = script_engine_get_error_backtrace(NULL);
+                }
+            }
+
+            if (error_location && error_location->source_name[0] != '\0')
+            {
+                char location_str[256];
+                snprintf(location_str, sizeof(location_str), "Location: %s:%u:%u",
+                         error_location->source_name,
+                         error_location->line,
+                         error_location->column);
+
+                lv_obj_t *location_label = lv_label_create(extra_slot);
+                lv_label_set_text(location_label, location_str);
+                lv_obj_set_width(location_label, EOS_PANEL_CONTENT_WIDTH);
+                lv_label_set_long_mode(location_label, LV_LABEL_LONG_WRAP);
+                lv_obj_set_style_text_color(location_label, EOS_COLOR_GREY_1, 0);
+                eos_label_set_font_size(location_label, EOS_FONT_SIZE_SMALL);
+            }
+
         if (backtrace_count > 0)
         {
-            const script_error_location_t *backtrace = script_engine_get_error_backtrace(NULL);
             if (backtrace)
             {
                 eos_accordion_t *accordion = eos_accordion_create(extra_slot, eos_lang_get_text(STR_ID_APP_RUN_ERR_BACKTRACE));

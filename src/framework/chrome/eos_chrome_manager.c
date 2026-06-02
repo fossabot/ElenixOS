@@ -223,7 +223,20 @@ void eos_chrome_manager_handle_crown_click(void)
         return;
     }
 
-    bool from_watchface = (eos_activity_get_current() == eos_activity_get_watchface());
+    eos_activity_t *current = eos_activity_get_current();
+    eos_activity_t *visible = eos_activity_get_visible();
+    eos_activity_t *watchface = eos_activity_get_watchface();
+    bool from_watchface = (current == watchface);
+
+    EOS_LOG_I("Crown click: current=%p[type=%d] visible=%p[type=%d] watchface=%p[type=%d] from_watchface=%d transition=%d",
+              (void *)current,
+              current ? eos_activity_get_type(current) : -1,
+              (void *)visible,
+              visible ? eos_activity_get_type(visible) : -1,
+              (void *)watchface,
+              watchface ? eos_activity_get_type(watchface) : -1,
+              from_watchface,
+              eos_activity_is_transition_in_progress());
 
     if (from_watchface)
     {

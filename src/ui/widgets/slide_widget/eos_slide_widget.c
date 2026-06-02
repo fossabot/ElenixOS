@@ -20,7 +20,7 @@
 #include "eos_event.h"
 
 /* Macros and Definitions -------------------------------------*/
-#define _HIGHLIGHT_TOUCH_AREA 1
+#define _HIGHLIGHT_TOUCH_AREA 0
 #define _SLIDE_ANIM_DURATION 120
 
 /* Private Structures -----------------------------------------*/

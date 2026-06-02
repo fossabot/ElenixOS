@@ -35,7 +35,6 @@ target_include_directories(elenixos_lib
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/jerryscript/jerry-core/include
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/jerryscript/jerry-ext/include
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cJSON
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/uthash/src
 )
 
 # Link against necessary libraries

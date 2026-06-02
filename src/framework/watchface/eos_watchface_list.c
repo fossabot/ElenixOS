@@ -19,7 +19,7 @@
 #include "eos_image.h"
 #include "eos_port.h"
 #include "eos_anim.h"
-#include "script_engine_manager.h"
+#include "script_engine_core.h"
 #include "eos_service_config.h"
 #include "eos_service_storage.h"
 #include "eos_activity.h"

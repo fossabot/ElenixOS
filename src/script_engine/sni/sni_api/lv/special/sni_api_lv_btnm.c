@@ -12,7 +12,6 @@
 #include "sni_api_export.h"
 #include "sni_type_bridge.h"
 #include "sni_types.h"
-#include "uthash.h"
 
 /* Macros and Definitions -------------------------------------*/
 
@@ -24,12 +23,9 @@ typedef struct sni_btnm_map_ctx
     const char **map;
     uint32_t map_size;
     uint32_t button_count;
-    UT_hash_handle hh;
 } sni_btnm_map_ctx_t;
 
 /* Variables --------------------------------------------------*/
-
-static sni_btnm_map_ctx_t *s_btnm_map_ctx = NULL;
 
 /* Function Implementations -----------------------------------*/
 
@@ -55,24 +51,32 @@ static void sni_btnm_free_map(const char **map, uint32_t map_size)
 
 static void sni_btnm_release_ctx(lv_obj_t *obj)
 {
-    sni_btnm_map_ctx_t *ctx = NULL;
+    sni_control_block_t *cb = (sni_control_block_t *)lv_obj_get_user_data(obj);
+    if (!cb)
+    {
+        return;
+    }
 
-    HASH_FIND_PTR(s_btnm_map_ctx, &obj, ctx);
+    sni_btnm_map_ctx_t *ctx = (sni_btnm_map_ctx_t *)cb->aux;
     if (!ctx)
     {
         return;
     }
 
-    HASH_DEL(s_btnm_map_ctx, ctx);
+    cb->aux = NULL;
     sni_btnm_free_map(ctx->map, ctx->map_size);
     eos_free(ctx);
 }
 
 static bool sni_btnm_store_map(lv_obj_t *obj, const char **map, uint32_t map_size, uint32_t button_count)
 {
-    sni_btnm_map_ctx_t *ctx = NULL;
+    sni_control_block_t *cb = (sni_control_block_t *)lv_obj_get_user_data(obj);
+    if (!cb)
+    {
+        return false;
+    }
 
-    HASH_FIND_PTR(s_btnm_map_ctx, &obj, ctx);
+    sni_btnm_map_ctx_t *ctx = (sni_btnm_map_ctx_t *)cb->aux;
     if (!ctx)
     {
         ctx = eos_malloc_zeroed(sizeof(sni_btnm_map_ctx_t));
@@ -81,7 +85,7 @@ static bool sni_btnm_store_map(lv_obj_t *obj, const char **map, uint32_t map_siz
             return false;
         }
         ctx->obj = obj;
-        HASH_ADD_PTR(s_btnm_map_ctx, obj, ctx);
+        cb->aux = ctx;
     }
     else
     {
@@ -96,9 +100,12 @@ static bool sni_btnm_store_map(lv_obj_t *obj, const char **map, uint32_t map_siz
 
 static sni_btnm_map_ctx_t *sni_btnm_find_ctx(lv_obj_t *obj)
 {
-    sni_btnm_map_ctx_t *ctx = NULL;
-    HASH_FIND_PTR(s_btnm_map_ctx, &obj, ctx);
-    return ctx;
+    sni_control_block_t *cb = (sni_control_block_t *)lv_obj_get_user_data(obj);
+    if (!cb)
+    {
+        return NULL;
+    }
+    return (sni_btnm_map_ctx_t *)cb->aux;
 }
 
 static char *sni_btnm_dup_literal(const char *literal)

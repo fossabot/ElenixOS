@@ -228,7 +228,6 @@ jerry_value_t sni_api_lv_obj_set_user_data(const jerry_call_info_t *call_info_p,
         return sni_api_throw_error("Failed to store user data");
     }
 
-    lv_obj_set_user_data(self_obj, NULL);
     return jerry_undefined();
 }
 

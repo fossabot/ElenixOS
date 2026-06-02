@@ -56,7 +56,6 @@ static void _eos_fault_panel_container_delete_cb(lv_event_t *e)
     {
         fault_panel->panel = NULL;
         eos_free(fault_panel);
-        EOS_LOG_D("Fault panel auto-freed on container delete: %p", (void *)fault_panel);
     }
 }
 
