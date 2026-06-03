@@ -12,7 +12,7 @@
 
 
 <div>
-  <a href="./README.md">English</a> | <a href="./README.zh-CN.md">中文</a>
+  <a href="./README.md">English</a> | <a href="./README.zh-CN.md">简体中文</a>
 </div>
 
 ---
@@ -41,6 +41,11 @@ Please refer to the [Quick Start](https://docs.elenixos.com/en/docs/getting_star
 ## Reference Documentation
 
 Please refer to the [ElenixOS Documentation](https://docs.elenixos.com/en).
+
+## Community
+
+- [GitHub Discussions](https://github.com/ElenixOS/ElenixOS/discussions)
+- [Tencent Channel](https://pd.qq.com/s/2arlf3js7)
 
 ## Open Source License
 
