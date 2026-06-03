@@ -3,8 +3,8 @@
  * @brief File system porting
  */
 
-#ifndef ELENIX_OS_FS_PORT_H
-#define ELENIX_OS_FS_PORT_H
+#ifndef EOS_FS_PORT_H
+#define EOS_FS_PORT_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -109,6 +109,13 @@ int eos_fs_seek(eos_file_t file, uint32_t pos);
  */
 int eos_fs_size(eos_file_t file, uint32_t *size);
 /**
+ * @brief Get current file position
+ * @param file File handle
+ * @param pos Output current file position
+ * @return int Returns 0 on success, -1 on failure
+ */
+int eos_fs_tell(eos_file_t file, uint32_t *pos);
+/**
  * @brief Close file
  * @param file File handle
  */
@@ -190,4 +197,4 @@ int eos_fs_sync(eos_file_t file);
 }
 #endif
 
-#endif /* ELENIX_OS_FS_PORT_H */
+#endif /* EOS_FS_PORT_H */

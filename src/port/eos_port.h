@@ -3,8 +3,8 @@
  * @brief ElenixOS porting
  */
 
-#ifndef ELENIX_OS_PORT_H
-#define ELENIX_OS_PORT_H
+#ifndef EOS_PORT_H
+#define EOS_PORT_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -15,10 +15,9 @@ extern "C" {
 #include <stdbool.h>
 #include <stddef.h>
 #include "eos_core.h"
-#include "eos_sensor.h"
 #include "eos_fs_port.h"
-#include "eos_port_sensor.h"
-#include "eos_time.h"
+#include "port/critical/eos_port_critical.h"
+
 /* Public macros ----------------------------------------------*/
 /**
  * @brief Function weak definition macro
@@ -39,34 +38,21 @@ extern "C" {
     #error not supported tool chain
 #endif
 
+#ifndef EOS_TIMEOUT_INFINITE
 #define EOS_TIMEOUT_INFINITE UINT32_MAX
+#endif
 
 /* Public typedefs --------------------------------------------*/
-typedef struct eos_sem_t eos_sem_t;   /**< Semaphore */
+
+typedef enum
+{
+    EOS_AUDIO_STATE_UNAVAILABLE = 0,
+    EOS_AUDIO_STATE_READY = 1,
+    EOS_AUDIO_STATE_BUSY = 2,
+    EOS_AUDIO_STATE_ERROR = 3,
+} eos_audio_state_t;
 /* Public function prototypes --------------------------------*/
 
-/**
- * @brief Create a semaphore
- * @param initial_count Initial count
- * @param max_count Maximum count
- * @return Pointer to semaphore object, returns NULL if failed
- */
-eos_sem_t* eos_sem_create(uint32_t initial_count, uint32_t max_count);
-/**
- * @brief Destroy semaphore
- */
-void eos_sem_destroy(eos_sem_t* sem);
-/**
- * @brief Wait for semaphore
- * @param timeout_ms Timeout time (milliseconds), 0 for non-blocking, EOS_TIMEOUT_INFINITE for infinite wait
- * @return true Successfully obtained
- * @return false Timeout or failed
- */
-bool eos_sem_take(eos_sem_t* sem, uint32_t timeout_ms);
-/**
- * @brief Release semaphore
- */
-void eos_sem_give(eos_sem_t* sem);
 /**
  * @brief Delay for specified time (non-blocking)
  * @param ms Milliseconds
@@ -87,18 +73,6 @@ void eos_bluetooth_enable(void);
  */
 void eos_bluetooth_disable(void);
 /**
- * @brief Get current time structure
- * @return eos_datetime_t Time structure
- * @note Recommended to use RTC to get time
- * @warning Please sync time by yourself to ensure accurate time
- */
-eos_datetime_t eos_time_get_core(void);
-/**
- * @brief Set screen brightness
- * @param brightness Brightness value (0~100)
- */
-void eos_display_set_brightness(uint8_t brightness);
-/**
  * @brief Locate phone
  *
  * Make phone ring via Bluetooth or other methods to locate phone.
@@ -109,45 +83,39 @@ void eos_locate_phone(void);
  * @param volume Volume
  */
 void eos_speaker_set_volume(uint8_t volume);
+
 /**
- * @brief System enters sleep mode (low power state)
- *
- * This function needs to complete:
- *
- * - Stop touch
- *
- * - Turn off screen
- *
- * - Turn off other peripherals
- *
- * - CPU frequency reduction, enter low power
- *
+ * @brief Detect whether speaker hardware is available.
+ * @return true if available
  */
-void eos_sys_sleep(void);
+bool eos_speaker_detect(void);
+
 /**
- * @brief System enters always-on display mode
- *
- * This function needs to complete:
- *
- * - Stop touch
- *
- * - Turn off other peripherals
- *
- * - CPU frequency reduction, enter low power
- *
+ * @brief Detect whether microphone hardware is available.
+ * @return true if available
  */
-void eos_sys_aod(void);
+bool eos_microphone_detect(void);
+
 /**
- * @brief System exits sleep mode
- *
- * This function needs to complete:
- *
- * - Wake up peripherals turned off by `eos_sys_sleep()`, turn off low power mode
- *
+ * @brief Get platform audio playback state.
  */
-void eos_sys_wake(void);
+eos_audio_state_t eos_audio_get_state(void);
+
+/**
+ * @brief Play audio file from path.
+ * @param file_path path to audio file
+ * @return 0 on success, negative value on failure
+ */
+int eos_audio_play_file(const char *file_path);
+
+/**
+ * @brief Stop current audio playback.
+ * @return 0 on success, negative value on failure
+ */
+int eos_audio_stop(void);
+
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* ELENIX_OS_PORT_H */
+#endif /* EOS_PORT_H */

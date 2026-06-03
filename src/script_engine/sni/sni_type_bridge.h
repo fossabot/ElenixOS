@@ -88,6 +88,14 @@ void sni_tb_register_val_obj(const sni_val_obj_t *val_obj);
  */
 void sni_tb_register_handle_destroy_cb(sni_type_t type, sni_handle_destroy_cb_t destroy_cb);
 
+/**
+ * @brief Unregister a native handle from its owning context and mark it dead
+ * @param handle Target handle
+ */
+void sni_tb_unregister_handle(sni_control_block_t *handle);
+
+void sni_tb_clear_resource_native_ptr(jerry_value_t obj);
+
 void sni_tb_init(void);
 
 #ifdef __cplusplus

@@ -12,6 +12,7 @@
 #include "sni_callback_runtime.h"
 #include "sni_type_bridge.h"
 #include "sni_types.h"
+#include "sni_context.h"
 
 /* Macros and Definitions -------------------------------------*/
 
@@ -51,8 +52,11 @@ jerry_value_t sni_api_ctor_anim(const jerry_call_info_t *call_info_p,
         return sni_api_throw_error("Failed to create anim");
     }
 
+    sni_context_add_anim(sni_cb_get_context(), ctx, call_info_p->this_value);
+
     if (!sni_tb_c2js_set_object(&ctx, SNI_H_LV_ANIM, call_info_p->this_value))
     {
+        sni_context_remove_anim(sni_cb_get_context(), ctx);
         eos_free(ctx);
         return sni_api_throw_error("Failed to bind native object");
     }

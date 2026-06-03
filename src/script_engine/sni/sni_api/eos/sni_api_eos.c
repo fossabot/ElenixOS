@@ -20,11 +20,10 @@
 #include "script_engine_core.h"
 #include "eos_font.h"
 #include "eos_activity.h"
-#include "eos_time.h"
+#include "eos_service_time.h"
 #include "eos_app.h"
 #include "eos_watchface.h"
-#include "eos_fs.h"
-#include "eos_dfw.h"
+#include "eos_service_storage.h"
 #include "eos_app_header.h"
 #include "eos_ww_clock_hand.h"
 /* Macros and Definitions -------------------------------------*/
@@ -65,7 +64,7 @@ static bool sni_api_eos_to_c_string(jerry_value_t js_val, char **out_str)
 static char *sni_api_eos_get_assets_file_str(jerry_value_t js_val)
 {
     char *src = NULL;
-    char path[PATH_MAX];
+    char path[EOS_FS_PATH_MAX];
     char *ret = NULL;
     const char *script_id = NULL;
 
@@ -97,7 +96,7 @@ static char *sni_api_eos_get_assets_file_str(jerry_value_t js_val)
 
     eos_free(src);
 
-    if (!eos_is_file(path))
+    if (!eos_storage_is_file(path))
     {
         return NULL;
     }
@@ -115,7 +114,7 @@ static char *sni_api_eos_get_assets_file_str(jerry_value_t js_val)
 static bool sni_api_eos_config_write_to_file(cJSON *root)
 {
     char *json_str = NULL;
-    char config_file_path[PATH_MAX];
+    char config_file_path[EOS_FS_PATH_MAX];
     bool ret;
 
     if (!root)
@@ -132,7 +131,7 @@ static bool sni_api_eos_config_write_to_file(cJSON *root)
     if (script_engine_get_current_script_type() == SCRIPT_TYPE_APPLICATION)
     {
         snprintf(config_file_path, sizeof(config_file_path), EOS_APP_DATA_DIR "%s", script_engine_get_current_script_id());
-        eos_fs_mkdir_if_not_exist(config_file_path);
+        eos_storage_mkdir_if_not_exist(config_file_path);
         snprintf(config_file_path,
                  sizeof(config_file_path),
                  EOS_APP_DATA_DIR "%s/config.json",
@@ -144,7 +143,7 @@ static bool sni_api_eos_config_write_to_file(cJSON *root)
                  sizeof(config_file_path),
                  EOS_WATCHFACE_DATA_DIR "%s",
                  script_engine_get_current_script_id());
-        eos_fs_mkdir_if_not_exist(config_file_path);
+        eos_storage_mkdir_if_not_exist(config_file_path);
         snprintf(config_file_path,
                  sizeof(config_file_path),
                  EOS_WATCHFACE_DATA_DIR "%s/config.json",
@@ -156,11 +155,7 @@ static bool sni_api_eos_config_write_to_file(cJSON *root)
         return false;
     }
 
-#if EOS_DFW_ENABLE
-    ret = eos_dfw_write(config_file_path, (uint8_t *)json_str, strlen(json_str));
-#else
-    ret = eos_fs_write_file(config_file_path, json_str, strlen(json_str)) > 0;
-#endif
+    ret = (eos_storage_write_file(config_file_path, json_str, strlen(json_str)) == EOS_OK);
 
     eos_free(json_str);
     return ret;
@@ -168,13 +163,13 @@ static bool sni_api_eos_config_write_to_file(cJSON *root)
 
 static cJSON *sni_api_eos_config_load_from_file(void)
 {
-    char config_file_path[PATH_MAX];
+    char config_file_path[EOS_FS_PATH_MAX];
     char *data = NULL;
     cJSON *root = NULL;
 
     if (script_engine_get_current_script_type() == SCRIPT_TYPE_APPLICATION)
     {
-        eos_fs_mkdir_if_not_exist(EOS_APP_DATA_DIR);
+        eos_storage_mkdir_if_not_exist(EOS_APP_DATA_DIR);
         snprintf(config_file_path,
                  sizeof(config_file_path),
                  EOS_APP_DATA_DIR "%s/config.json",
@@ -182,7 +177,7 @@ static cJSON *sni_api_eos_config_load_from_file(void)
     }
     else if (script_engine_get_current_script_type() == SCRIPT_TYPE_WATCHFACE)
     {
-        eos_fs_mkdir_if_not_exist(EOS_WATCHFACE_DATA_DIR);
+        eos_storage_mkdir_if_not_exist(EOS_WATCHFACE_DATA_DIR);
         snprintf(config_file_path,
                  sizeof(config_file_path),
                  EOS_WATCHFACE_DATA_DIR "%s/config.json",
@@ -193,16 +188,12 @@ static cJSON *sni_api_eos_config_load_from_file(void)
         return NULL;
     }
 
-    if (!eos_is_file(config_file_path))
+    if (!eos_storage_is_file(config_file_path))
     {
         return cJSON_CreateObject();
     }
 
-#if EOS_DFW_ENABLE
-    data = (char *)eos_dfw_read(config_file_path);
-#else
-    data = eos_fs_read_file(config_file_path);
-#endif
+    data = eos_storage_read_file(config_file_path);
 
     if (!data)
     {
@@ -760,6 +751,58 @@ jerry_value_t sni_api_eos_clock_hand_place_pivot(const jerry_call_info_t *call_i
     return jerry_undefined();
 }
 
+jerry_value_t sni_api_eos_clock_hand_attach(const jerry_call_info_t *call_info_p,
+                                             const jerry_value_t args_p[],
+                                             const jerry_length_t args_count)
+{
+    lv_obj_t *obj;
+    int32_t type;
+
+    (void)call_info_p;
+
+    if (args_count != 2)
+    {
+        return sni_api_throw_error("Usage: clockHand.attach(obj, type)");
+    }
+
+    if (!sni_tb_js2c(args_p[0], SNI_H_LV_OBJ, &obj) ||
+        !jerry_value_is_number(args_p[1]))
+    {
+        return sni_api_throw_error("Invalid argument type");
+    }
+
+    type = (int32_t)jerry_value_as_number(args_p[1]);
+    eos_clock_hand_attach(obj, (eos_clock_hand_type_t)type);
+    return jerry_undefined();
+}
+
+jerry_value_t sni_api_eos_clock_hand_center_style(const jerry_call_info_t *call_info_p,
+                                                   const jerry_value_t args_p[],
+                                                   const jerry_length_t args_count)
+{
+    lv_obj_t *obj;
+    int32_t px;
+    int32_t py;
+
+    (void)call_info_p;
+
+    if (args_count != 3)
+    {
+        return sni_api_throw_error("Usage: clockHand.centerStyle(obj, pivotX, pivotY)");
+    }
+
+    if (!sni_tb_js2c(args_p[0], SNI_H_LV_OBJ, &obj) ||
+        !jerry_value_is_number(args_p[1]) || !jerry_value_is_number(args_p[2]))
+    {
+        return sni_api_throw_error("Invalid argument type");
+    }
+
+    px = (int32_t)jerry_value_as_number(args_p[1]);
+    py = (int32_t)jerry_value_as_number(args_p[2]);
+    eos_clock_hand_center_style(obj, px, py);
+    return jerry_undefined();
+}
+
 jerry_value_t sni_api_eos_activity_current(const jerry_call_info_t *call_info_p,
                                            const jerry_value_t args_p[],
                                            const jerry_length_t args_count)
@@ -1175,6 +1218,8 @@ const sni_method_desc_t eos_class_static_methods_clock_hand[] = {
     {.name = "create", .handler = sni_api_eos_clock_hand_create},
     {.name = "center", .handler = sni_api_eos_clock_hand_center},
     {.name = "placePivot", .handler = sni_api_eos_clock_hand_place_pivot},
+    {.name = "attach", .handler = sni_api_eos_clock_hand_attach},
+    {.name = "centerStyle", .handler = sni_api_eos_clock_hand_center_style},
     {.name = NULL, .handler = NULL},
 };
 

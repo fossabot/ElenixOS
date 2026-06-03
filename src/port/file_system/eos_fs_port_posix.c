@@ -91,6 +91,18 @@ int eos_fs_size(eos_file_t fp, uint32_t *size)
     return 0;
 }
 
+/* Get current file position */
+int eos_fs_tell(eos_file_t fp, uint32_t *pos)
+{
+    if (!fp || !pos)
+        return -1;
+    long cur = ftell((FILE *)fp);
+    if (cur < 0)
+        return -1;
+    *pos = (uint32_t)cur;
+    return 0;
+}
+
 /* Close file */
 void eos_fs_close(eos_file_t fp)
 {

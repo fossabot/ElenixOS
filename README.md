@@ -12,7 +12,7 @@
 
 
 <div>
-  <a href="./README.md">English</a> | <a href="./README.zh-CN.md">中文</a>
+  <a href="./README.md">English</a> | <a href="./README.zh-CN.md">简体中文</a>
 </div>
 
 ---
@@ -42,6 +42,11 @@ Please refer to the [Quick Start](https://docs.elenixos.com/en/docs/getting_star
 
 Please refer to the [ElenixOS Documentation](https://docs.elenixos.com/en).
 
+## Community
+
+- [GitHub Discussions](https://github.com/ElenixOS/ElenixOS/discussions)
+- [Tencent Channel](https://pd.qq.com/s/2arlf3js7)
+
 ## Open Source License
 
 This software is released under the Apache License 2.0 open-source license. This license allows individuals and organizations to freely use, modify, and distribute this software and its derivatives for commercial purposes, but requires retaining the original copyright notice, license text, and related statements. The software is provided "as is" without any form of warranty.
@@ -54,4 +59,3 @@ ElenixOS used the following open-source projects during development, and we woul
 - JerryScript: https://jerryscript.net
 - RemixIcon: https://remixicon.com
 - cJSON: https://github.com/DaveGamble/cJSON
-- uthash: https://troydhanson.github.io/uthash

@@ -15,6 +15,28 @@ extern "C" {
 #include <stdint.h>
 #include "jerryscript.h"
 #include "lvgl.h"
+#include "sni_types.h"
+#include "sni_context.h"
+
+/* Public macros ----------------------------------------------*/
+
+/* Public typedefs --------------------------------------------*/
+
+typedef enum
+{
+    SNI_TIMER_STATE_ACTIVE,
+    SNI_TIMER_STATE_PENDING_DELETE,
+    SNI_TIMER_STATE_DELETED
+} sni_timer_state_t;
+
+typedef struct sni_timer_callback_ctx
+{
+    lv_timer_t *timer;
+    jerry_value_t js_cb;
+    sni_context_t *owner_ctx;
+    sni_timer_state_t state;
+    bool auto_delete;
+} sni_timer_callback_ctx_t;
 
 /* Public function prototypes --------------------------------*/
 
@@ -75,15 +97,13 @@ void sni_cb_event_cleanup_descriptor(lv_event_dsc_t *dsc);
 
 /**
  * @brief Create LVGL timer and bind JS callback
- * @param js_cb JS callback function, signature (timer, user_data) => void
+ * @param js_cb JS callback function, signature (timer) => void
  * @param period Timer period (milliseconds)
- * @param js_user_data JS user data (can be undefined)
  * @param out_timer Returned created timer pointer
  * @return bool Whether successful
  */
 bool sni_cb_timer_create(jerry_value_t js_cb,
                          uint32_t period,
-                         jerry_value_t js_user_data,
                          lv_timer_t **out_timer);
 
 /**
@@ -95,10 +115,12 @@ bool sni_cb_timer_create(jerry_value_t js_cb,
 bool sni_cb_timer_set_cb(lv_timer_t *timer, jerry_value_t js_cb);
 
 /**
- * @brief Delete timer and clean up JS context
+ * @brief Set timer auto_delete flag (managed by SNI, not LVGL)
  * @param timer LVGL timer
+ * @param auto_delete Whether to auto-delete when timer finishes
+ * @return bool Whether successful
  */
-void sni_cb_timer_delete(lv_timer_t *timer);
+bool sni_cb_timer_set_auto_delete(lv_timer_t *timer, bool auto_delete);
 
 /* Anim Callback API -----------------------------------------*/
 
@@ -134,6 +156,13 @@ typedef enum
     SNI_ANIM_PATH_ENUM_MAX,
 } sni_anim_path_builtin_t;
 
+typedef enum
+{
+    SNI_ANIM_STATE_ACTIVE,
+    SNI_ANIM_STATE_PENDING_DELETE,
+    SNI_ANIM_STATE_DELETED
+} sni_anim_state_t;
+
 typedef struct sni_anim_callback_ctx
 {
     lv_anim_t pre_anim;
@@ -141,16 +170,35 @@ typedef struct sni_anim_callback_ctx
     jerry_value_t cb_slots[SNI_ANIM_CB_SLOT_COUNT];
     sni_anim_path_kind_t path_kind;
     lv_anim_path_cb_t builtin_path_fn;
-    bool js_refs_freed;
-    bool lvgl_alive;
+    sni_context_t *owner_ctx;
+    sni_anim_state_t state;
 } sni_anim_callback_ctx_t;
 
 bool sni_cb_anim_create(sni_anim_callback_ctx_t **out_ctx);
 bool sni_cb_anim_set_cb(sni_anim_callback_ctx_t *ctx, sni_anim_cb_slot_t slot, jerry_value_t js_cb);
 bool sni_cb_anim_set_path_builtin(sni_anim_callback_ctx_t *ctx, sni_anim_path_builtin_t path_kind);
 bool sni_cb_anim_set_path_js(sni_anim_callback_ctx_t *ctx, jerry_value_t js_cb);
+/**
+ * @brief Start animation
+ * @param ctx Animation context (created by sni_cb_anim_create)
+ * @return bool Whether successful
+ */
 bool sni_cb_anim_start(sni_anim_callback_ctx_t *ctx);
+
+/**
+ * @brief Get the LVGL anim object from context
+ * @param ctx Animation context
+ * @return Pointer to the active lv_anim_t, or NULL if not started
+ */
 lv_anim_t *sni_cb_anim_get_lv_anim(sni_anim_callback_ctx_t *ctx);
+
+/**
+ * @brief Get the global sni context (shared across callback modules)
+ * @return Global sni_context_t pointer
+ */
+sni_context_t *sni_cb_get_context(void);
+
+void sni_cb_context_cleanup_events(sni_context_t *ctx);
 
 #ifdef __cplusplus
 }

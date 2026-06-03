@@ -14,33 +14,51 @@
 #include "sni_api_export.h"
 #include "sni_type_bridge.h"
 #include "sni_types.h"
-#include "uthash.h"
+#include "sni_context.h"
+#include "script_engine_core.h"
+#include "spm.h"
+#include "eos_dispatcher.h"
+#include "lvgl/src/misc/lv_timer_private.h"
 
 /* Macros and Definitions -------------------------------------*/
+
+static inline void sni_cb_safe_jerry_value_free(jerry_value_t *value)
+{
+    if (!value) return;
+
+    if (jerry_value_is_undefined(*value) || jerry_value_is_null(*value))
+    {
+        return;
+    }
+
+    if (script_engine_get_state() == SCRIPT_ENGINE_STATE_UNINITIALIZED)
+    {
+        EOS_LOG_W("Skip jerry_value_free: engine not initialized");
+        *value = jerry_undefined();
+        return;
+    }
+
+    jerry_value_free(*value);
+    *value = jerry_undefined();
+}
+
 typedef struct sni_event_callback_ctx
 {
     lv_obj_t *owner;
     lv_event_dsc_t *dsc;
     jerry_value_t js_cb;
     jerry_value_t js_user_data;
+    sni_context_t *owner_ctx;
     bool alive;
-    UT_hash_handle hh;
+    struct sni_event_callback_ctx *next;
 } sni_event_callback_ctx_t;
 
-typedef struct sni_timer_callback_ctx
-{
-    lv_timer_t *timer;
-    jerry_value_t js_cb;
-    jerry_value_t js_user_data;
-    bool alive;
-    UT_hash_handle hh;
-} sni_timer_callback_ctx_t;
-
-/* Variables --------------------------------------------------*/
-static sni_event_callback_ctx_t *s_event_ctx_map = NULL;
-static sni_timer_callback_ctx_t *s_timer_ctx_map = NULL;
-
 /* Function Implementations -----------------------------------*/
+
+static sni_event_callback_ctx_t **sni_cb_event_list_ptr(sni_context_t *ctx)
+{
+    return (sni_event_callback_ctx_t **)&ctx->event_ctx_list;
+}
 
 static bool sni_cb_js_strict_equal(jerry_value_t lhs, jerry_value_t rhs)
 {
@@ -93,13 +111,23 @@ static void sni_cb_event_free_ctx(sni_event_callback_ctx_t *ctx)
 
     ctx->alive = false;
 
-    if (ctx->dsc)
+    if (ctx->dsc && ctx->owner_ctx)
     {
-        HASH_DEL(s_event_ctx_map, ctx);
+        sni_event_callback_ctx_t **pp = sni_cb_event_list_ptr(ctx->owner_ctx);
+        while (*pp)
+        {
+            if (*pp == ctx)
+            {
+                *pp = ctx->next;
+                break;
+            }
+            pp = &(*pp)->next;
+        }
     }
 
-    jerry_value_free(ctx->js_cb);
-    jerry_value_free(ctx->js_user_data);
+    sni_cb_safe_jerry_value_free(&ctx->js_cb);
+    sni_cb_safe_jerry_value_free(&ctx->js_user_data);
+
     eos_free(ctx);
 }
 
@@ -117,12 +145,17 @@ static void sni_cb_event_dispatch(lv_event_t *e)
         return;
     }
 
+    if (sni_context_is_paused(ctx->owner_ctx))
+    {
+        return;
+    }
+
     lv_event_t *event_ptr = e;
     jerry_value_t event_obj = sni_tb_c2js(&event_ptr, SNI_H_LV_EVENT);
     sni_cb_event_prepare_js_event(event_obj, e, ctx->js_user_data);
 
     jerry_value_t args[1] = {event_obj};
-    jerry_value_t ret = jerry_call(ctx->js_cb, jerry_undefined(), args, 1);
+    jerry_value_t ret = spm_call(ctx->owner_ctx->owner, ctx->js_cb, jerry_undefined(), args, 1);
 
     if (jerry_value_is_error(ret) || jerry_value_is_exception(ret))
     {
@@ -140,8 +173,8 @@ void sni_cb_event_cleanup_descriptor(lv_event_dsc_t *dsc)
         return;
     }
 
-    sni_event_callback_ctx_t *ctx = NULL;
-    HASH_FIND_PTR(s_event_ctx_map, &dsc, ctx);
+    sni_event_callback_ctx_t *ctx =
+        (sni_event_callback_ctx_t *)lv_event_dsc_get_user_data(dsc);
     if (!ctx)
     {
         return;
@@ -156,16 +189,22 @@ static void sni_cb_event_dsc_destroy_cb(void *native_ptr)
     sni_cb_event_cleanup_descriptor(dsc);
 }
 
-static void sni_cb_timer_handle_destroy_cb(void *native_ptr); /* forward declaration */
-static void sni_cb_anim_handle_destroy_hook(void *native_ptr);
-static void sni_cb_style_handle_destroy_cb(void *native_ptr);
+static void sni_cb_style_handle_destroy_cb(void *native_ptr)
+{
+    lv_style_t *style = (lv_style_t *)native_ptr;
+    lv_style_reset(style);
+}
+
+static void sni_cb_font_handle_destroy_cb(void *native_ptr)
+{
+    (void)native_ptr;
+}
 
 void sni_cb_runtime_init(void)
 {
     sni_tb_register_handle_destroy_cb(SNI_H_LV_EVENT_DSC, sni_cb_event_dsc_destroy_cb);
-    sni_tb_register_handle_destroy_cb(SNI_H_LV_TIMER, sni_cb_timer_handle_destroy_cb);
     sni_tb_register_handle_destroy_cb(SNI_H_LV_STYLE, sni_cb_style_handle_destroy_cb);
-    sni_tb_register_handle_destroy_cb(SNI_H_LV_ANIM, sni_cb_anim_handle_destroy_hook);
+    sni_tb_register_handle_destroy_cb(SNI_H_LV_FONT, sni_cb_font_handle_destroy_cb);
 }
 
 /* Timer Callback Implementation ------------------------------*/
@@ -173,15 +212,33 @@ void sni_cb_runtime_init(void)
 static void sni_cb_timer_dispatch(lv_timer_t *t)
 {
     sni_timer_callback_ctx_t *ctx = (sni_timer_callback_ctx_t *)lv_timer_get_user_data(t);
-    if (!ctx || !ctx->alive)
+    if (!ctx || ctx->state != SNI_TIMER_STATE_ACTIVE)
     {
+        return;
+    }
+
+    if (sni_context_is_paused(ctx->owner_ctx))
+    {
+        return;
+    }
+
+    if (!ctx->owner_ctx || !ctx->owner_ctx->owner)
+    {
+        EOS_LOG_W("Timer dispatch skipped: owner context or program is NULL");
+        return;
+    }
+
+    if (ctx->owner_ctx->owner->state != SCRIPT_PROGRAM_STATE_ACTIVE)
+    {
+        EOS_LOG_W("Timer dispatch skipped: program not active (state=%d)",
+                  ctx->owner_ctx->owner->state);
         return;
     }
 
     lv_timer_t *timer_ptr = t;
     jerry_value_t js_timer = sni_tb_c2js(&timer_ptr, SNI_H_LV_TIMER);
-    jerry_value_t args[2] = {js_timer, ctx->js_user_data};
-    jerry_value_t ret = jerry_call(ctx->js_cb, jerry_undefined(), args, 2);
+    jerry_value_t args[1] = {js_timer};
+    jerry_value_t ret = spm_call(ctx->owner_ctx->owner, ctx->js_cb, jerry_undefined(), args, 1);
 
     if (jerry_value_is_error(ret) || jerry_value_is_exception(ret))
     {
@@ -190,47 +247,14 @@ static void sni_cb_timer_dispatch(lv_timer_t *t)
 
     jerry_value_free(ret);
     jerry_value_free(js_timer);
-}
 
-static void sni_cb_timer_cleanup_impl(sni_timer_callback_ctx_t *ctx)
-{
-    if (!ctx || !ctx->alive)
+    if (t->repeat_count <= 0 && ctx->auto_delete && ctx->state == SNI_TIMER_STATE_ACTIVE)
     {
-        return;
+        sni_context_request_async_delete_timer(ctx->owner_ctx, t);
     }
-
-    ctx->alive = false;
-    HASH_DEL(s_timer_ctx_map, ctx);
-    jerry_value_free(ctx->js_cb);
-    jerry_value_free(ctx->js_user_data);
-    eos_free(ctx);
 }
 
-static void sni_cb_timer_handle_destroy_cb(void *native_ptr)
-{
-    lv_timer_t *timer = (lv_timer_t *)native_ptr;
-    sni_timer_callback_ctx_t *ctx = NULL;
-    HASH_FIND_PTR(s_timer_ctx_map, &timer, ctx);
-    if (ctx)
-    {
-        // ctx is still in hash table, user did not explicitly delete it, clean up here
-        sni_cb_timer_cleanup_impl(ctx);
-        lv_timer_delete(timer);
-    }
-    // ctx is not in hash table, it has been explicitly deleted
-}
-
-static void sni_cb_style_handle_destroy_cb(void *native_ptr)
-{
-    lv_style_t *style = (lv_style_t *)native_ptr;
-    if (!style)
-    {
-        return;
-    }
-
-    lv_style_reset(style);
-}
-
+/* Event Callback Implementation -----------------------------*/
 
 bool sni_cb_event_add(lv_obj_t *obj,
                       jerry_value_t js_cb,
@@ -252,6 +276,7 @@ bool sni_cb_event_add(lv_obj_t *obj,
     ctx->owner = obj;
     ctx->js_cb = jerry_value_copy(js_cb);
     ctx->js_user_data = jerry_value_copy(js_user_data);
+    ctx->owner_ctx = sni_cb_get_context();
     ctx->alive = true;
 
     lv_event_dsc_t *dsc = lv_obj_add_event_cb(obj, sni_cb_event_dispatch, filter, ctx);
@@ -264,7 +289,11 @@ bool sni_cb_event_add(lv_obj_t *obj,
     }
 
     ctx->dsc = dsc;
-    HASH_ADD_PTR(s_event_ctx_map, dsc, ctx);
+    {
+        sni_event_callback_ctx_t **head = sni_cb_event_list_ptr(ctx->owner_ctx);
+        ctx->next = *head;
+        *head = ctx;
+    }
 
     *out_dsc = dsc;
     return true;
@@ -290,24 +319,29 @@ bool sni_cb_event_remove_by_js_cb(lv_obj_t *obj, jerry_value_t js_cb)
     }
 
     bool removed_any = false;
-    sni_event_callback_ctx_t *ctx = NULL;
-    sni_event_callback_ctx_t *tmp = NULL;
+    sni_event_callback_ctx_t *ctx =
+        *sni_cb_event_list_ptr(sni_cb_get_context());
 
-    HASH_ITER(hh, s_event_ctx_map, ctx, tmp)
+    while (ctx)
     {
+        sni_event_callback_ctx_t *next = ctx->next;
+
         if (ctx->owner != obj)
         {
+            ctx = next;
             continue;
         }
 
         if (!sni_cb_js_strict_equal(ctx->js_cb, js_cb))
         {
+            ctx = next;
             continue;
         }
 
         lv_obj_remove_event_dsc(obj, ctx->dsc);
         sni_cb_event_free_ctx(ctx);
         removed_any = true;
+        ctx = next;
     }
 
     return removed_any;
@@ -323,29 +357,35 @@ uint32_t sni_cb_event_remove_by_js_cb_user_data(lv_obj_t *obj,
     }
 
     uint32_t removed = 0;
-    sni_event_callback_ctx_t *ctx = NULL;
-    sni_event_callback_ctx_t *tmp = NULL;
+    sni_event_callback_ctx_t *ctx =
+        *sni_cb_event_list_ptr(sni_cb_get_context());
 
-    HASH_ITER(hh, s_event_ctx_map, ctx, tmp)
+    while (ctx)
     {
+        sni_event_callback_ctx_t *next = ctx->next;
+
         if (ctx->owner != obj)
         {
+            ctx = next;
             continue;
         }
 
         if (!sni_cb_js_strict_equal(ctx->js_cb, js_cb))
         {
+            ctx = next;
             continue;
         }
 
         if (!sni_cb_js_strict_equal(ctx->js_user_data, js_user_data))
         {
+            ctx = next;
             continue;
         }
 
         lv_obj_remove_event_dsc(obj, ctx->dsc);
         sni_cb_event_free_ctx(ctx);
         removed++;
+        ctx = next;
     }
 
     return removed;
@@ -353,7 +393,6 @@ uint32_t sni_cb_event_remove_by_js_cb_user_data(lv_obj_t *obj,
 
 bool sni_cb_timer_create(jerry_value_t js_cb,
                          uint32_t period,
-                         jerry_value_t js_user_data,
                          lv_timer_t **out_timer)
 {
     if (!jerry_value_is_function(js_cb) || !out_timer)
@@ -368,20 +407,21 @@ bool sni_cb_timer_create(jerry_value_t js_cb,
     }
 
     ctx->js_cb = jerry_value_copy(js_cb);
-    ctx->js_user_data = jerry_value_copy(js_user_data);
-    ctx->alive = true;
+    ctx->owner_ctx = sni_cb_get_context();
+    ctx->state = SNI_TIMER_STATE_ACTIVE;
+    ctx->auto_delete = true;
 
     lv_timer_t *timer = lv_timer_create(sni_cb_timer_dispatch, period, ctx);
     if (!timer)
     {
-        jerry_value_free(ctx->js_cb);
-        jerry_value_free(ctx->js_user_data);
+        sni_cb_safe_jerry_value_free(&ctx->js_cb);
         eos_free(ctx);
         return false;
     }
 
+    lv_timer_set_auto_delete(timer, false);
+
     ctx->timer = timer;
-    HASH_ADD_PTR(s_timer_ctx_map, timer, ctx);
 
     *out_timer = timer;
     return true;
@@ -394,32 +434,43 @@ bool sni_cb_timer_set_cb(lv_timer_t *timer, jerry_value_t js_cb)
         return false;
     }
 
-    sni_timer_callback_ctx_t *ctx = NULL;
-    HASH_FIND_PTR(s_timer_ctx_map, &timer, ctx);
-    if (!ctx || !ctx->alive)
+    sni_timer_callback_ctx_t *ctx = (sni_timer_callback_ctx_t *)lv_timer_get_user_data(timer);
+    if (!ctx || ctx->state != SNI_TIMER_STATE_ACTIVE)
     {
         return false;
     }
 
-    jerry_value_free(ctx->js_cb);
+    if (!jerry_value_is_undefined(ctx->js_cb) && !jerry_value_is_null(ctx->js_cb))
+    {
+        sni_cb_safe_jerry_value_free(&ctx->js_cb);
+    }
+
     ctx->js_cb = jerry_value_copy(js_cb);
+
+    /* Ensure the freed old callback is fully collected before returning
+       to JS, preventing JerryScript internal reference entanglement
+       between the released closure and any concurrently held callbacks
+       (e.g. animation custom_exec callbacks from the same module). */
+    jerry_heap_gc(JERRY_GC_PRESSURE_LOW);
+
     return true;
 }
 
-void sni_cb_timer_delete(lv_timer_t *timer)
+bool sni_cb_timer_set_auto_delete(lv_timer_t *timer, bool auto_delete)
 {
     if (!timer)
     {
-        return;
+        return false;
     }
 
-    sni_timer_callback_ctx_t *ctx = NULL;
-    HASH_FIND_PTR(s_timer_ctx_map, &timer, ctx);
-    if (ctx)
+    sni_timer_callback_ctx_t *ctx = (sni_timer_callback_ctx_t *)lv_timer_get_user_data(timer);
+    if (!ctx || ctx->state != SNI_TIMER_STATE_ACTIVE)
     {
-        sni_cb_timer_cleanup_impl(ctx);
+        return false;
     }
-    lv_timer_delete(timer);
+
+    ctx->auto_delete = auto_delete;
+    return true;
 }
 
 /* Anim Callback Implementation ------------------------------*/
@@ -439,7 +490,7 @@ static lv_anim_path_cb_t s_anim_path_table[SNI_ANIM_PATH_ENUM_MAX] =
 
 static bool sni_cb_anim_has_js_cb(sni_anim_callback_ctx_t *ctx, sni_anim_cb_slot_t slot)
 {
-    return ctx && !ctx->js_refs_freed && jerry_value_is_function(ctx->cb_slots[slot]);
+    return ctx && ctx->state == SNI_ANIM_STATE_ACTIVE && jerry_value_is_function(ctx->cb_slots[slot]);
 }
 
 static jerry_value_t sni_cb_anim_make_js_anim(sni_anim_callback_ctx_t *ctx)
@@ -450,13 +501,12 @@ static jerry_value_t sni_cb_anim_make_js_anim(sni_anim_callback_ctx_t *ctx)
 
 static void sni_cb_anim_clear_slot(sni_anim_callback_ctx_t *ctx, sni_anim_cb_slot_t slot)
 {
-    if (!ctx || ctx->js_refs_freed)
+    if (!ctx || ctx->state == SNI_ANIM_STATE_DELETED)
     {
         return;
     }
 
-    jerry_value_free(ctx->cb_slots[slot]);
-    ctx->cb_slots[slot] = jerry_undefined();
+    sni_cb_safe_jerry_value_free(&ctx->cb_slots[slot]);
 }
 
 static bool sni_cb_anim_store_slot(sni_anim_callback_ctx_t *ctx, sni_anim_cb_slot_t slot, jerry_value_t js_cb)
@@ -466,25 +516,14 @@ static bool sni_cb_anim_store_slot(sni_anim_callback_ctx_t *ctx, sni_anim_cb_slo
         return false;
     }
 
+    if (ctx->state != SNI_ANIM_STATE_ACTIVE)
+    {
+        return false;
+    }
+
     sni_cb_anim_clear_slot(ctx, slot);
     ctx->cb_slots[slot] = jerry_value_copy(js_cb);
     return true;
-}
-
-static void sni_cb_anim_free_js_refs(sni_anim_callback_ctx_t *ctx)
-{
-    if (!ctx || ctx->js_refs_freed)
-    {
-        return;
-    }
-
-    for (uint32_t i = 0; i < SNI_ANIM_CB_SLOT_COUNT; i++)
-    {
-        jerry_value_free(ctx->cb_slots[i]);
-        ctx->cb_slots[i] = jerry_undefined();
-    }
-
-    ctx->js_refs_freed = true;
 }
 
 static void sni_cb_anim_call_void_slot(sni_anim_callback_ctx_t *ctx, sni_anim_cb_slot_t slot)
@@ -494,9 +533,27 @@ static void sni_cb_anim_call_void_slot(sni_anim_callback_ctx_t *ctx, sni_anim_cb
         return;
     }
 
+    if (sni_context_is_paused(ctx->owner_ctx))
+    {
+        return;
+    }
+
+    if (!ctx->owner_ctx || !ctx->owner_ctx->owner)
+    {
+        EOS_LOG_W("Anim dispatch skipped: owner context or program is NULL");
+        return;
+    }
+
+    if (ctx->owner_ctx->owner->state != SCRIPT_PROGRAM_STATE_ACTIVE)
+    {
+        EOS_LOG_W("Anim dispatch skipped: program not active (state=%d)",
+                  ctx->owner_ctx->owner->state);
+        return;
+    }
+
     jerry_value_t js_anim = sni_cb_anim_make_js_anim(ctx);
     jerry_value_t args[1] = {js_anim};
-    jerry_value_t ret = jerry_call(ctx->cb_slots[slot], jerry_undefined(), args, 1);
+    jerry_value_t ret = spm_call(ctx->owner_ctx->owner, ctx->cb_slots[slot], jerry_undefined(), args, 1);
 
     if (jerry_value_is_error(ret) || jerry_value_is_exception(ret))
     {
@@ -507,18 +564,35 @@ static void sni_cb_anim_call_void_slot(sni_anim_callback_ctx_t *ctx, sni_anim_cb
     jerry_value_free(js_anim);
 }
 
-static void sni_cb_anim_custom_exec_dispatch(lv_anim_t *a, int32_t value)
+static void sni_cb_anim_custom_exec_dispatch(lv_anim_t *var, int32_t value)
 {
-    sni_anim_callback_ctx_t *ctx = (sni_anim_callback_ctx_t *)lv_anim_get_user_data(a);
+    sni_anim_callback_ctx_t *ctx = (sni_anim_callback_ctx_t *)lv_anim_get_user_data(var);
     if (!sni_cb_anim_has_js_cb(ctx, SNI_ANIM_CB_SLOT_CUSTOM_EXEC))
     {
+        return;
+    }
+
+    if (sni_context_is_paused(ctx->owner_ctx))
+    {
+        return;
+    }
+
+    if (!ctx->owner_ctx || !ctx->owner_ctx->owner)
+    {
+        return;
+    }
+
+    if (ctx->owner_ctx->owner->state != SCRIPT_PROGRAM_STATE_ACTIVE)
+    {
+        EOS_LOG_W("Anim custom exec dispatch skipped: program not active (state=%d)",
+                  ctx->owner_ctx->owner->state);
         return;
     }
 
     jerry_value_t js_anim = sni_cb_anim_make_js_anim(ctx);
     jerry_value_t js_value = sni_tb_c2js(&value, SNI_T_INT32);
     jerry_value_t args[2] = {js_anim, js_value};
-    jerry_value_t ret = jerry_call(ctx->cb_slots[SNI_ANIM_CB_SLOT_CUSTOM_EXEC], jerry_undefined(), args, 2);
+    jerry_value_t ret = spm_call(ctx->owner_ctx->owner, ctx->cb_slots[SNI_ANIM_CB_SLOT_CUSTOM_EXEC], jerry_undefined(), args, 2);
 
     if (jerry_value_is_error(ret) || jerry_value_is_exception(ret))
     {
@@ -550,10 +624,20 @@ static void sni_cb_anim_deleted_dispatch(lv_anim_t *a)
         return;
     }
 
+    if (ctx->state != SNI_ANIM_STATE_ACTIVE)
+    {
+        return;
+    }
+
+    if (!ctx->owner_ctx || sni_context_is_paused(ctx->owner_ctx))
+    {
+        return;
+    }
+
     lv_anim_set_user_data(a, NULL);
     ctx->active_anim = NULL;
-    ctx->lvgl_alive = false;
-    sni_cb_anim_call_void_slot(ctx, SNI_ANIM_CB_SLOT_DELETED);
+
+    sni_context_request_async_delete_anim(ctx->owner_ctx, ctx);
 }
 
 static int32_t sni_cb_anim_call_int_slot(sni_anim_callback_ctx_t *ctx, sni_anim_cb_slot_t slot, int32_t fallback)
@@ -563,10 +647,27 @@ static int32_t sni_cb_anim_call_int_slot(sni_anim_callback_ctx_t *ctx, sni_anim_
         return fallback;
     }
 
+    if (sni_context_is_paused(ctx->owner_ctx))
+    {
+        return fallback;
+    }
+
+    if (!ctx->owner_ctx || !ctx->owner_ctx->owner)
+    {
+        return fallback;
+    }
+
+    if (ctx->owner_ctx->owner->state != SCRIPT_PROGRAM_STATE_ACTIVE)
+    {
+        EOS_LOG_W("Anim int callback skipped: program not active (state=%d)",
+                  ctx->owner_ctx->owner->state);
+        return fallback;
+    }
+
     int32_t result = fallback;
     jerry_value_t js_anim = sni_cb_anim_make_js_anim(ctx);
     jerry_value_t args[1] = {js_anim};
-    jerry_value_t ret = jerry_call(ctx->cb_slots[slot], jerry_undefined(), args, 1);
+    jerry_value_t ret = spm_call(ctx->owner_ctx->owner, ctx->cb_slots[slot], jerry_undefined(), args, 1);
 
     if (jerry_value_is_error(ret) || jerry_value_is_exception(ret))
     {
@@ -609,21 +710,31 @@ static int32_t sni_cb_anim_path_dispatch(const lv_anim_t *a)
     return lv_anim_path_linear(a);
 }
 
-static void sni_cb_anim_handle_destroy_hook(void *native_ptr)
+sni_context_t *sni_cb_get_context(void)
 {
-    sni_anim_callback_ctx_t *ctx = (sni_anim_callback_ctx_t *)native_ptr;
-    if (!ctx)
-    {
-        return;
-    }
+    script_program_t *prog = spm_get_active_program();
+    return prog ? prog->sni_ctx : NULL;
+}
 
-    if (ctx->lvgl_alive && ctx->active_anim)
-    {
-        lv_anim_set_user_data(ctx->active_anim, NULL);
-    }
+void sni_cb_context_cleanup_events(sni_context_t *ctx)
+{
+    if (!ctx) return;
 
-    sni_cb_anim_free_js_refs(ctx);
-    eos_free(ctx);
+    sni_event_callback_ctx_t *event_ctx =
+        *(sni_event_callback_ctx_t **)&ctx->event_ctx_list;
+    *(sni_event_callback_ctx_t **)&ctx->event_ctx_list = NULL;
+    while (event_ctx)
+    {
+        sni_event_callback_ctx_t *next = event_ctx->next;
+
+        event_ctx->alive = false;
+
+        sni_cb_safe_jerry_value_free(&event_ctx->js_cb);
+        sni_cb_safe_jerry_value_free(&event_ctx->js_user_data);
+
+        eos_free(event_ctx);
+        event_ctx = next;
+    }
 }
 
 bool sni_cb_anim_create(sni_anim_callback_ctx_t **out_ctx)
@@ -643,6 +754,8 @@ bool sni_cb_anim_create(sni_anim_callback_ctx_t **out_ctx)
     {
         ctx->cb_slots[i] = jerry_undefined();
     }
+    ctx->owner_ctx = sni_cb_get_context();
+    ctx->state = SNI_ANIM_STATE_ACTIVE;
 
     lv_anim_init(&ctx->pre_anim);
     lv_anim_set_user_data(&ctx->pre_anim, ctx);
@@ -659,7 +772,7 @@ lv_anim_t *sni_cb_anim_get_lv_anim(sni_anim_callback_ctx_t *ctx)
         return NULL;
     }
 
-    if (ctx->lvgl_alive && ctx->active_anim)
+    if (ctx->state == SNI_ANIM_STATE_ACTIVE && ctx->active_anim)
     {
         return ctx->active_anim;
     }
@@ -782,7 +895,12 @@ bool sni_cb_anim_start(sni_anim_callback_ctx_t *ctx)
         return false;
     }
 
-    if (ctx->lvgl_alive && ctx->active_anim)
+    if (ctx->state == SNI_ANIM_STATE_ACTIVE && ctx->active_anim)
+    {
+        return false;
+    }
+
+    if (ctx->state != SNI_ANIM_STATE_ACTIVE)
     {
         return false;
     }
@@ -795,7 +913,7 @@ bool sni_cb_anim_start(sni_anim_callback_ctx_t *ctx)
     }
 
     ctx->active_anim = active_anim;
-    ctx->lvgl_alive = true;
     lv_anim_set_user_data(active_anim, ctx);
+
     return true;
 }

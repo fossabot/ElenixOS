@@ -11,7 +11,6 @@
 #include "sni_api_export.h"
 #include "sni_type_bridge.h"
 #include "sni_types.h"
-#include "uthash.h"
 #include "eos_mem.h"
 
 /* Macros and Definitions -------------------------------------*/
@@ -22,10 +21,7 @@ typedef struct sni_canvas_buf_ctx
 {
     lv_obj_t *obj;
     lv_draw_buf_t *owned_draw_buf;
-    UT_hash_handle hh;
 } sni_canvas_buf_ctx_t;
-
-static sni_canvas_buf_ctx_t *g_canvas_ctx = NULL;
 
 /* Function Implementations -----------------------------------*/
 
@@ -46,27 +42,42 @@ static bool sni_lv_canvas_has_draw_buf(lv_obj_t *obj)
 
 static sni_canvas_buf_ctx_t *sni_canvas_ctx_find(lv_obj_t *obj)
 {
-    sni_canvas_buf_ctx_t *ctx = NULL;
-    HASH_FIND_PTR(g_canvas_ctx, &obj, ctx);
-    return ctx;
+    sni_control_block_t *cb = (sni_control_block_t *)lv_obj_get_user_data(obj);
+    if (!cb)
+    {
+        return NULL;
+    }
+    return (sni_canvas_buf_ctx_t *)cb->aux;
 }
 
 static void sni_canvas_ctx_remove(lv_obj_t *obj)
 {
-    sni_canvas_buf_ctx_t *ctx = sni_canvas_ctx_find(obj);
+    sni_control_block_t *cb = (sni_control_block_t *)lv_obj_get_user_data(obj);
+    if (!cb)
+    {
+        return;
+    }
+
+    sni_canvas_buf_ctx_t *ctx = (sni_canvas_buf_ctx_t *)cb->aux;
     if (!ctx)
     {
         return;
     }
 
-    HASH_DEL(g_canvas_ctx, ctx);
+    cb->aux = NULL;
     eos_free(ctx);
 }
 
 static void sni_canvas_ctx_delete_cb(lv_event_t *e)
 {
     lv_obj_t *obj = lv_event_get_target(e);
-    sni_canvas_buf_ctx_t *ctx = sni_canvas_ctx_find(obj);
+    sni_control_block_t *cb = (sni_control_block_t *)lv_obj_get_user_data(obj);
+    if (!cb)
+    {
+        return;
+    }
+
+    sni_canvas_buf_ctx_t *ctx = (sni_canvas_buf_ctx_t *)cb->aux;
     if (!ctx)
     {
         return;
@@ -83,19 +94,24 @@ static void sni_canvas_ctx_delete_cb(lv_event_t *e)
 
 static sni_canvas_buf_ctx_t *sni_canvas_ctx_get_or_create(lv_obj_t *obj)
 {
-    sni_canvas_buf_ctx_t *ctx = sni_canvas_ctx_find(obj);
-    if (ctx)
+    sni_control_block_t *cb = (sni_control_block_t *)lv_obj_get_user_data(obj);
+    if (!cb)
     {
-        return ctx;
+        return NULL;
     }
 
-    ctx = eos_malloc_zeroed(sizeof(sni_canvas_buf_ctx_t));
+    if (cb->aux)
+    {
+        return (sni_canvas_buf_ctx_t *)cb->aux;
+    }
+
+    sni_canvas_buf_ctx_t *ctx = eos_malloc_zeroed(sizeof(sni_canvas_buf_ctx_t));
     if (!ctx)
     {
         return NULL;
     }
     ctx->obj = obj;
-    HASH_ADD_PTR(g_canvas_ctx, obj, ctx);
+    cb->aux = ctx;
 
     lv_obj_add_event_cb(obj, sni_canvas_ctx_delete_cb, LV_EVENT_DELETE, NULL);
     return ctx;
