@@ -54,4 +54,3 @@ ElenixOS used the following open-source projects during development, and we woul
 - JerryScript: https://jerryscript.net
 - RemixIcon: https://remixicon.com
 - cJSON: https://github.com/DaveGamble/cJSON
-- uthash: https://troydhanson.github.io/uthash
