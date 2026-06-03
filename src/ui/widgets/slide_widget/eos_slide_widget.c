@@ -576,11 +576,13 @@ void eos_slide_widget_move(eos_slide_widget_t *sw, lv_coord_t start, lv_coord_t 
     else if (end == sw->base)
     {
         transit_state = EOS_SLIDE_WIDGET_STATE_REVERTING;
-        settle_state = EOS_SLIDE_WIDGET_STATE_IDLE;
+        /* When reversed, base is the "away" (open) position */
+        settle_state = sw->reversed ? EOS_SLIDE_WIDGET_STATE_OPEN : EOS_SLIDE_WIDGET_STATE_IDLE;
     }
     else if (end == sw->target)
     {
         transit_state = EOS_SLIDE_WIDGET_STATE_THRESHOLD;
+        /* When reversed, target is the "home" (closed) position */
         settle_state = sw->reversed ? EOS_SLIDE_WIDGET_STATE_IDLE : EOS_SLIDE_WIDGET_STATE_OPEN;
     }
 

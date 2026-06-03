@@ -411,7 +411,6 @@ static void _control_center_mute_switch_btn_cb(lv_event_t *e)
 static void _control_center_settings_entry_cb(lv_event_t *e)
 {
     eos_settings_enter();
-    eos_control_panel_slide_change();
 }
 
 static void _control_center_opened_cb(lv_event_t *e)
