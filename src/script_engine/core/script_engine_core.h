@@ -162,12 +162,35 @@ jerry_value_t script_engine_call_raw(jerry_value_t func, jerry_value_t this_val,
 
 /** @name Property Helpers */
 /**@{*/
-extern inline void script_engine_set_prop_number(jerry_value_t obj,
-    const char *prop_name, double value);
-extern inline void script_engine_set_prop_bool(jerry_value_t obj,
-    const char *prop_name, bool value);
-extern inline void script_engine_set_prop_string(jerry_value_t obj,
-    const char *prop_name, const char *value);
+static inline void script_engine_set_prop_number(jerry_value_t obj,
+    const char *prop_name, double value)
+{
+    jerry_value_t prop = jerry_string_sz(prop_name);
+    jerry_value_t val = jerry_number(value);
+    jerry_value_free(jerry_object_set(obj, prop, val));
+    jerry_value_free(val);
+    jerry_value_free(prop);
+}
+
+static inline void script_engine_set_prop_bool(jerry_value_t obj,
+    const char *prop_name, bool value)
+{
+    jerry_value_t prop = jerry_string_sz(prop_name);
+    jerry_value_t val = jerry_boolean(value);
+    jerry_value_free(jerry_object_set(obj, prop, val));
+    jerry_value_free(val);
+    jerry_value_free(prop);
+}
+
+static inline void script_engine_set_prop_string(jerry_value_t obj,
+    const char *prop_name, const char *value)
+{
+    jerry_value_t prop = jerry_string_sz(prop_name);
+    jerry_value_t val = jerry_string_sz(value);
+    jerry_value_free(jerry_object_set(obj, prop, val));
+    jerry_value_free(val);
+    jerry_value_free(prop);
+}
 /**@}*/
 
 /** @name Reload */

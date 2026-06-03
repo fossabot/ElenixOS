@@ -657,32 +657,6 @@ void script_engine_register_functions(jerry_value_t parent,
     }
 }
 
-inline void script_engine_set_prop_number(jerry_value_t obj, const char *prop_name, double value)
-{
-    jerry_value_t prop = jerry_string_sz(prop_name);
-    jerry_value_t val = jerry_number(value);
-    jerry_value_free(jerry_object_set(obj, prop, val));
-    jerry_value_free(val);
-    jerry_value_free(prop);
-}
-
-inline void script_engine_set_prop_bool(jerry_value_t obj, const char *prop_name, bool value)
-{
-    jerry_value_t prop = jerry_string_sz(prop_name);
-    jerry_value_t val = jerry_boolean(value);
-    jerry_value_free(jerry_object_set(obj, prop, val));
-    jerry_value_free(val);
-    jerry_value_free(prop);
-}
-
-inline void script_engine_set_prop_string(jerry_value_t obj, const char *prop_name, const char *value)
-{
-    jerry_value_t prop = jerry_string_sz(prop_name);
-    jerry_value_t val = jerry_string_sz(value);
-    jerry_value_free(jerry_object_set(obj, prop, val));
-    jerry_value_free(val);
-    jerry_value_free(prop);
-}
 
 /* ---- JS Call (raw — SPM gates) ---- */
 
