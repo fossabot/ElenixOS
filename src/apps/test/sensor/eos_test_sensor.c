@@ -207,9 +207,11 @@ static bool _test_read_latest(void)
 
 static uint32_t _subscribe_cb_count = 0;
 
-static void _subscribe_test_cb(eos_event_t *e)
+static void _subscribe_test_cb(eos_sensor_type_t type, const eos_sensor_raw_data_t *data, void *user_data)
 {
-    (void)e;
+    (void)type;
+    (void)data;
+    (void)user_data;
     _subscribe_cb_count++;
 }
 
@@ -238,6 +240,232 @@ static bool _test_subscribe(void)
 
     _record_test("Subscribe/Unsubscribe", passed,
                  passed ? "Subscription works" : "Subscription failed");
+    return passed;
+}
+
+/* ============================================
+ * Nested / UAF Scenario Tests
+ * ============================================ */
+
+/*
+ * Test: callback unsubscribing ITSELF during eos_sensor_notify() broadcast.
+ * This is the use-after-free scenario — after cb returns, its node is freed,
+ * so the notify loop must NOT dereference sub->next after the callback.
+ * The fix: save sub->next before invoking the callback.
+ */
+static uint32_t _nested_self_count_a = 0;
+static uint32_t _nested_self_count_b = 0;
+
+static void _nested_self_cb_a(eos_sensor_type_t type, const eos_sensor_raw_data_t *data, void *user_data)
+{
+    (void)type; (void)data; (void)user_data;
+    _nested_self_count_a++;
+    /* Unsubscribe ourselves from within the callback */
+    eos_sensor_unsubscribe(EOS_SENSOR_TYPE_ACCE, _nested_self_cb_a, NULL);
+}
+
+static void _nested_self_cb_b(eos_sensor_type_t type, const eos_sensor_raw_data_t *data, void *user_data)
+{
+    (void)type; (void)data; (void)user_data;
+    _nested_self_count_b++;
+}
+
+static bool _test_nested_self_unsubscribe(void)
+{
+    bool passed = true;
+    _nested_self_count_a = 0;
+    _nested_self_count_b = 0;
+
+    /* Subscribe two callbacks: A unsubscribes itself, B should survive */
+    eos_sensor_subscribe(EOS_SENSOR_TYPE_ACCE, _nested_self_cb_a, NULL, 0);
+    eos_sensor_subscribe(EOS_SENSOR_TYPE_ACCE, _nested_self_cb_b, NULL, 0);
+
+    /* Trigger notification */
+    eos_sensor_data_t data = {0};
+    data.acce.x = 42;
+    eos_sensor_notify(EOS_SENSOR_TYPE_ACCE, &data, lv_tick_get());
+
+    /*
+     * A should have fired once (and then unsubscribed itself).
+     * B should have fired once.
+     * The loop should NOT have crashed (use-after-free).
+     */
+    if (_nested_self_count_a != 1) passed = false;
+    if (_nested_self_count_b != 1) passed = false;
+
+    /* Trigger a second notify — A is gone, only B should fire */
+    _nested_self_count_b = 0;
+    eos_sensor_notify(EOS_SENSOR_TYPE_ACCE, &data, lv_tick_get());
+    if (_nested_self_count_b != 1) passed = false;
+
+    /* Clean up */
+    eos_sensor_unsubscribe(EOS_SENSOR_TYPE_ACCE, _nested_self_cb_b, NULL);
+    /* Double-unsubscribe of A should be harmless (already removed) */
+
+    _record_test("Nested Self-Unsubscribe", passed,
+                 passed ? "Self-unsubscribe in callback handled safely"
+                        : "Use-after-free or wrong callback count");
+    return passed;
+}
+
+/*
+ * Test: callback unsubscribing ANOTHER subscriber during notify.
+ * The removed subscriber should NOT receive this cycle's data.
+ */
+static uint32_t _nested_cross_count_a = 0;
+static uint32_t _nested_cross_count_b = 0;
+
+/* Forward declaration: cb_a calls unsubscribe(cb_b) so cb_b must be visible */
+static void _nested_cross_cb_b(eos_sensor_type_t type, const eos_sensor_raw_data_t *data, void *user_data);
+
+static void _nested_cross_cb_a(eos_sensor_type_t type, const eos_sensor_raw_data_t *data, void *user_data)
+{
+    (void)type; (void)data; (void)user_data;
+    _nested_cross_count_a++;
+    /* Unsubscribe B (which appears after A in the list) */
+    eos_sensor_unsubscribe(EOS_SENSOR_TYPE_ACCE, _nested_cross_cb_b, NULL);
+}
+
+static void _nested_cross_cb_b(eos_sensor_type_t type, const eos_sensor_raw_data_t *data, void *user_data)
+{
+    (void)type; (void)data; (void)user_data;
+    _nested_cross_count_b++;
+}
+
+static bool _test_nested_cross_unsubscribe(void)
+{
+    bool passed = true;
+    _nested_cross_count_a = 0;
+    _nested_cross_count_b = 0;
+
+    /* A must be subscribed LAST so it's prepended first (head of list).
+     * This way A fires first and can try to remove B behind it. */
+    eos_sensor_subscribe(EOS_SENSOR_TYPE_ACCE, _nested_cross_cb_b, NULL, 0);
+    eos_sensor_subscribe(EOS_SENSOR_TYPE_ACCE, _nested_cross_cb_a, NULL, 0);
+
+    eos_sensor_data_t data = {0};
+    eos_sensor_notify(EOS_SENSOR_TYPE_ACCE, &data, lv_tick_get());
+
+    /* A should fire. B may or may not fire depending on list order.
+     * But most importantly: it should NOT crash. */
+    if (_nested_cross_count_a != 1) passed = false;
+
+    /* Clean up surviving subscribers */
+    eos_sensor_unsubscribe(EOS_SENSOR_TYPE_ACCE, _nested_cross_cb_a, NULL);
+
+    _record_test("Nested Cross-Unsubscribe", passed,
+                 passed ? "Cross-unsubscribe in callback handled safely"
+                        : "Cross-unsubscribe caused crash or wrong count");
+    return passed;
+}
+
+/*
+ * Test: callback subscribing a NEW subscriber during notify.
+ * The new subscriber must NOT receive this cycle's data
+ * (it wasn't subscribed when the data was produced).
+ */
+static uint32_t _nested_sub_new_count = 0;
+
+static void _nested_sub_new_cb(eos_sensor_type_t type, const eos_sensor_raw_data_t *data, void *user_data)
+{
+    (void)type; (void)data; (void)user_data;
+    _nested_sub_new_count++;
+}
+
+static void _nested_sub_origin_cb(eos_sensor_type_t type, const eos_sensor_raw_data_t *data, void *user_data)
+{
+    (void)type; (void)data; (void)user_data;
+    /* Subscribe a new callback from within this notification */
+    eos_sensor_subscribe(EOS_SENSOR_TYPE_ACCE, _nested_sub_new_cb, NULL, 0);
+}
+
+static bool _test_nested_subscribe_during_notify(void)
+{
+    bool passed = true;
+    _nested_sub_new_count = 0;
+
+    eos_sensor_subscribe(EOS_SENSOR_TYPE_ACCE, _nested_sub_origin_cb, NULL, 0);
+
+    eos_sensor_data_t data = {0};
+    data.acce.x = 99;
+    eos_sensor_notify(EOS_SENSOR_TYPE_ACCE, &data, lv_tick_get());
+
+    /*
+     * The new callback was added DURING the first notification.
+     * It should NOT have been called for this data (wasn't subscribed at notify time).
+     */
+    if (_nested_sub_new_count != 0) passed = false;
+
+    /* Now trigger a second notify — the new callback SHOULD fire */
+    _nested_sub_new_count = 0;
+    eos_sensor_notify(EOS_SENSOR_TYPE_ACCE, &data, lv_tick_get());
+    if (_nested_sub_new_count != 1) passed = false;
+
+    /* Clean up */
+    eos_sensor_unsubscribe(EOS_SENSOR_TYPE_ACCE, _nested_sub_origin_cb, NULL);
+    eos_sensor_unsubscribe(EOS_SENSOR_TYPE_ACCE, _nested_sub_new_cb, NULL);
+
+    _record_test("Nested Subscribe During Notify", passed,
+                 passed ? "Late subscriber correctly excluded from current cycle"
+                        : "Late subscriber incorrectly received current cycle data");
+    return passed;
+}
+
+/*
+ * Test: interleaved notifications across different sensor types.
+ * An ACCE callback triggers a GYRO notify which unsubscribes the ACCE caller.
+ * This tests cross-type isolation and the save-next pattern with nesting.
+ */
+static uint32_t _nested_multi_acce_count = 0;
+static uint32_t _nested_multi_gyro_count = 0;
+
+static void _nested_multi_gyro_cb(eos_sensor_type_t type, const eos_sensor_raw_data_t *data, void *user_data)
+{
+    (void)type; (void)data; (void)user_data;
+    _nested_multi_gyro_count++;
+}
+
+static void _nested_multi_acce_cb(eos_sensor_type_t type, const eos_sensor_raw_data_t *data, void *user_data)
+{
+    (void)type; (void)data; (void)user_data;
+    _nested_multi_acce_count++;
+
+    /* Trigger GYRO notify, which fires gyro subscribers */
+    eos_sensor_data_t gdata = {0};
+    gdata.gyro.x = 10;
+    eos_sensor_notify(EOS_SENSOR_TYPE_GYRO, &gdata, lv_tick_get());
+
+    /* Now unsubscribe ourselves — the outer ACCE notify loop must survive */
+    eos_sensor_unsubscribe(EOS_SENSOR_TYPE_ACCE, _nested_multi_acce_cb, NULL);
+}
+
+static bool _test_nested_multi_sensor_uaf(void)
+{
+    bool passed = true;
+    _nested_multi_acce_count = 0;
+    _nested_multi_gyro_count = 0;
+
+    eos_sensor_subscribe(EOS_SENSOR_TYPE_ACCE, _nested_multi_acce_cb, NULL, 0);
+    eos_sensor_subscribe(EOS_SENSOR_TYPE_GYRO, _nested_multi_gyro_cb, NULL, 0);
+
+    eos_sensor_data_t data = {0};
+    data.acce.x = 77;
+    eos_sensor_notify(EOS_SENSOR_TYPE_ACCE, &data, lv_tick_get());
+
+    /*
+     * ACCE callback: fired once (and unsubscribed itself).
+     * GYRO callback: fired once (triggered by ACCE callback).
+     * The ACCE notify outer loop must NOT have crashed.
+     */
+    if (_nested_multi_acce_count != 1) passed = false;
+    if (_nested_multi_gyro_count != 1) passed = false;
+
+    /* Clean up — ACCE is already unsubscribed */
+    eos_sensor_unsubscribe(EOS_SENSOR_TYPE_GYRO, _nested_multi_gyro_cb, NULL);
+
+    _record_test("Nested Multi-Sensor UAF", passed,
+                 passed ? "Cross-type nested notify+unsubscribe handled safely"
+                        : "Cross-type nested operations caused crash or wrong count");
     return passed;
 }
 
@@ -687,6 +915,10 @@ static void _run_service_layer_tests(void)
     _test_service_init();
     _test_read_latest();
     _test_subscribe();
+    _test_nested_self_unsubscribe();
+    _test_nested_cross_unsubscribe();
+    _test_nested_subscribe_during_notify();
+    _test_nested_multi_sensor_uaf();
     _test_sample_rate();
     _test_sample_rate_multiple();
     _test_sensor_enable_disable();

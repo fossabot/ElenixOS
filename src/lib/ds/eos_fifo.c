@@ -116,6 +116,60 @@ uint16_t eos_fifo_write(eos_fifo_t *fifo, const void *data, uint16_t size)
     return written;
 }
 
+void eos_fifo_drop(eos_fifo_t *fifo, uint16_t count)
+{
+    if (!fifo || count == 0)
+        return;
+
+    if (count > fifo->count)
+        count = fifo->count;
+
+    fifo->tail = (fifo->tail + count) % fifo->capacity;
+    fifo->count -= count;
+    fifo->stats.overflow_count++;
+
+    EOS_LOG_I("fifo drop %d bytes (overflow)", count);
+}
+
+uint16_t eos_fifo_write_atomic(eos_fifo_t *fifo, const void *data, uint16_t size)
+{
+    if (!fifo || !data || size == 0)
+        return 0;
+
+    /* Entry larger than total capacity — can never fit */
+    if (size > fifo->capacity)
+    {
+        EOS_LOG_E("fifo atomic write failed: size %d > capacity %d", size, fifo->capacity);
+        return 0;
+    }
+
+    /* Make room by dropping oldest entries if needed */
+    uint16_t free = fifo->capacity - fifo->count;
+    if (free < size)
+    {
+        uint16_t to_drop = size - free;
+        fifo->tail = (fifo->tail + to_drop) % fifo->capacity;
+        fifo->count -= to_drop;
+        fifo->stats.overflow_count++;
+        EOS_LOG_I("fifo atomic write: dropped %d bytes to make room", to_drop);
+    }
+
+    /* Now guaranteed space — write atomically */
+    const uint8_t *src = (const uint8_t *)data;
+    for (uint16_t i = 0; i < size; i++)
+    {
+        fifo->buffer[fifo->head] = src[i];
+        fifo->head = (fifo->head + 1) % fifo->capacity;
+    }
+    fifo->count += size;
+    fifo->stats.write_count += size;
+    if (fifo->count > fifo->stats.peak_usage)
+        fifo->stats.peak_usage = fifo->count;
+
+    EOS_LOG_I("fifo atomic write %d bytes (count=%d/%d)", size, fifo->count, fifo->capacity);
+    return size;
+}
+
 uint16_t eos_fifo_read(eos_fifo_t *fifo, void *buf, uint16_t size)
 {
     if (!fifo || !buf || size == 0)

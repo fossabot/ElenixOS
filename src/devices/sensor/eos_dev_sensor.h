@@ -171,17 +171,55 @@ typedef struct {
 typedef struct eos_dev_sensor_t eos_dev_sensor_t;
 
 /**
+ * @brief Sensor data-ready callback — called by the device driver when the hardware
+ *        FIFO watermark is reached or new data is available via interrupt.
+ * @param type  Sensor type that has data ready
+ * @param count Number of samples available in the hardware FIFO
+ */
+typedef void (*eos_sensor_data_ready_cb_t)(eos_sensor_type_t type, uint32_t count);
+
+/**
  * @brief Sensor device operations
  * @note Device layer does NOT provide read operation. Data is pushed to service layer
  *       via eos_sensor_notify(). Service layer manages FIFO and broadcasts to subscribers.
+ *
+ *       The last three ops are OPTIONAL (NULL = not supported). When not implemented,
+ *       the service layer falls back to software-timer-based polling via the port layer.
  */
 typedef struct {
+    /* ---- Required ops ---- */
     void (*init)(eos_dev_sensor_t *dev);
     void (*deinit)(eos_dev_sensor_t *dev);
     void (*enable)(eos_dev_sensor_t *dev);
     void (*disable)(eos_dev_sensor_t *dev);
     void (*set_sample_rate)(eos_dev_sensor_t *dev, uint32_t hz);
     void (*get_sample_rate)(eos_dev_sensor_t *dev, uint32_t *hz);
+
+    /* ---- Optional hardware-FIFO ops (NULL = unsupported) ---- */
+    /**
+     * @brief Set the hardware FIFO watermark threshold.
+     *        When the sensor's internal FIFO reaches this many samples,
+     *        the driver fires the data_ready callback.
+     * @param dev     Sensor device
+     * @param samples Watermark in number of samples (0 = disable watermark IRQ)
+     */
+    void (*set_fifo_watermark)(eos_dev_sensor_t *dev, uint16_t samples);
+
+    /**
+     * @brief Flush (clear) the hardware FIFO.
+     * @param dev Sensor device
+     */
+    void (*flush_fifo)(eos_dev_sensor_t *dev);
+
+    /**
+     * @brief Register a data-ready callback for interrupt-driven batch reads.
+     *        When the hardware FIFO watermark is reached, the driver calls `cb`
+     *        (from ISR or a deferred task). The service layer then reads batched
+     *        data and pushes it through eos_sensor_notify().
+     * @param dev Sensor device
+     * @param cb  Callback (NULL = unregister)
+     */
+    void (*set_data_ready_cb)(eos_dev_sensor_t *dev, eos_sensor_data_ready_cb_t cb);
 } eos_dev_sensor_ops_t;
 
 /**

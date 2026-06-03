@@ -56,8 +56,30 @@ void eos_fifo_reset(eos_fifo_t *fifo);
  * @param data Pointer to data to write
  * @param size Number of bytes to write
  * @return uint16_t Number of bytes actually written
+ * @note May perform partial writes when FIFO is near-full. For multi-byte
+ *       entries that must not be torn, prefer eos_fifo_write_atomic().
  */
 uint16_t eos_fifo_write(eos_fifo_t *fifo, const void *data, uint16_t size);
+
+/**
+ * @brief Atomically write data to FIFO (all-or-nothing)
+ * @param fifo FIFO pointer
+ * @param data Pointer to data to write
+ * @param size Number of bytes to write
+ * @return uint16_t Number of bytes written (size on success, 0 if entry
+ *         is larger than FIFO capacity)
+ * @note If insufficient free space, the oldest entries are dropped to
+ *       make room. The write is always atomic — either the full entry
+ *       is written or nothing is (if size > capacity).
+ */
+uint16_t eos_fifo_write_atomic(eos_fifo_t *fifo, const void *data, uint16_t size);
+
+/**
+ * @brief Drop oldest entries from FIFO to free space
+ * @param fifo FIFO pointer
+ * @param count Number of bytes to drop
+ */
+void eos_fifo_drop(eos_fifo_t *fifo, uint16_t count);
 
 /**
  * @brief Read data from FIFO
