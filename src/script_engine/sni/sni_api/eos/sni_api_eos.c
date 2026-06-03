@@ -751,6 +751,58 @@ jerry_value_t sni_api_eos_clock_hand_place_pivot(const jerry_call_info_t *call_i
     return jerry_undefined();
 }
 
+jerry_value_t sni_api_eos_clock_hand_attach(const jerry_call_info_t *call_info_p,
+                                             const jerry_value_t args_p[],
+                                             const jerry_length_t args_count)
+{
+    lv_obj_t *obj;
+    int32_t type;
+
+    (void)call_info_p;
+
+    if (args_count != 2)
+    {
+        return sni_api_throw_error("Usage: clockHand.attach(obj, type)");
+    }
+
+    if (!sni_tb_js2c(args_p[0], SNI_H_LV_OBJ, &obj) ||
+        !jerry_value_is_number(args_p[1]))
+    {
+        return sni_api_throw_error("Invalid argument type");
+    }
+
+    type = (int32_t)jerry_value_as_number(args_p[1]);
+    eos_clock_hand_attach(obj, (eos_clock_hand_type_t)type);
+    return jerry_undefined();
+}
+
+jerry_value_t sni_api_eos_clock_hand_center_style(const jerry_call_info_t *call_info_p,
+                                                   const jerry_value_t args_p[],
+                                                   const jerry_length_t args_count)
+{
+    lv_obj_t *obj;
+    int32_t px;
+    int32_t py;
+
+    (void)call_info_p;
+
+    if (args_count != 3)
+    {
+        return sni_api_throw_error("Usage: clockHand.centerStyle(obj, pivotX, pivotY)");
+    }
+
+    if (!sni_tb_js2c(args_p[0], SNI_H_LV_OBJ, &obj) ||
+        !jerry_value_is_number(args_p[1]) || !jerry_value_is_number(args_p[2]))
+    {
+        return sni_api_throw_error("Invalid argument type");
+    }
+
+    px = (int32_t)jerry_value_as_number(args_p[1]);
+    py = (int32_t)jerry_value_as_number(args_p[2]);
+    eos_clock_hand_center_style(obj, px, py);
+    return jerry_undefined();
+}
+
 jerry_value_t sni_api_eos_activity_current(const jerry_call_info_t *call_info_p,
                                            const jerry_value_t args_p[],
                                            const jerry_length_t args_count)
@@ -1166,6 +1218,8 @@ const sni_method_desc_t eos_class_static_methods_clock_hand[] = {
     {.name = "create", .handler = sni_api_eos_clock_hand_create},
     {.name = "center", .handler = sni_api_eos_clock_hand_center},
     {.name = "placePivot", .handler = sni_api_eos_clock_hand_place_pivot},
+    {.name = "attach", .handler = sni_api_eos_clock_hand_attach},
+    {.name = "centerStyle", .handler = sni_api_eos_clock_hand_center_style},
     {.name = NULL, .handler = NULL},
 };
 
