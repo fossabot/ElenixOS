@@ -234,19 +234,10 @@ eos_result_t eos_pkg_mgr_unpack(const char *pkg_path, const char *output_path, c
             return EOS_ERR_FILE_ERROR;
         }
 
-        // Allocate memory dynamically
-        char *name = (char *)eos_malloc(name_len + 1);
-        if (!name)
-        {
-            eos_storage_file_close(fp);
-            EOS_LOG_E("Memory allocation failed for entry %u", i);
-            return EOS_ERR_MEM;
-        }
-
         // Read the file name
+        char name[EOS_FS_PATH_MAX];
         if (eos_storage_file_read(fp, name, name_len) != (int)name_len)
         {
-            eos_free(name);
             eos_storage_file_close(fp);
             EOS_LOG_E("Failed to read name for entry %u", i);
             return EOS_ERR_FILE_ERROR;
@@ -260,7 +251,6 @@ eos_result_t eos_pkg_mgr_unpack(const char *pkg_path, const char *output_path, c
             eos_storage_file_read(fp, &offset, sizeof(uint32_t)) != sizeof(uint32_t) ||
             eos_storage_file_read(fp, &size, sizeof(uint32_t)) != sizeof(uint32_t))
         {
-            eos_free(name);
             eos_storage_file_close(fp);
             EOS_LOG_E("Failed to read entry fields for %s", name);
             return EOS_ERR_FILE_ERROR;
@@ -279,7 +269,6 @@ eos_result_t eos_pkg_mgr_unpack(const char *pkg_path, const char *output_path, c
             // Create the directory
             if (eos_storage_mkdir_recursive(full_path) != EOS_OK)
             {
-                eos_free(name);
                 eos_storage_file_close(fp);
                 EOS_LOG_E("Failed to create directory: %s", full_path);
                 return EOS_ERR_FILE_ERROR;
@@ -291,7 +280,6 @@ eos_result_t eos_pkg_mgr_unpack(const char *pkg_path, const char *output_path, c
             // Validate the file offset and size
             if (offset < EOS_PKG_TABLE_OFFSET || offset >= file_size)
             {
-                eos_free(name);
                 eos_storage_file_close(fp);
                 EOS_LOG_E("Invalid file offset: %u for %s", offset, name);
                 return EOS_ERR_FILE_ERROR;
@@ -299,7 +287,6 @@ eos_result_t eos_pkg_mgr_unpack(const char *pkg_path, const char *output_path, c
 
             if (offset + size > file_size)
             {
-                eos_free(name);
                 eos_storage_file_close(fp);
                 EOS_LOG_E("File size overflow: %u+%u=%u for %s",
                           offset, size, offset + size, name);
@@ -313,7 +300,6 @@ eos_result_t eos_pkg_mgr_unpack(const char *pkg_path, const char *output_path, c
                 *last_slash = '\0';
                 if (eos_storage_mkdir_recursive(full_path) != EOS_OK)
                 {
-                    eos_free(name);
                     eos_storage_file_close(fp);
                     EOS_LOG_E("Failed to create parent directory: %s", full_path);
                     return EOS_ERR_FILE_ERROR;
@@ -325,7 +311,6 @@ eos_result_t eos_pkg_mgr_unpack(const char *pkg_path, const char *output_path, c
             eos_file_t out_fp = eos_storage_file_open_write(full_path);
             if (out_fp == EOS_FILE_INVALID)
             {
-                eos_free(name);
                 eos_storage_file_close(fp);
                 EOS_LOG_E("Failed to create file: %s", full_path);
                 return EOS_ERR_FILE_ERROR;
@@ -335,7 +320,6 @@ eos_result_t eos_pkg_mgr_unpack(const char *pkg_path, const char *output_path, c
             if (eos_storage_file_seek(fp, offset) != 0)
             {
                 eos_storage_file_close(out_fp);
-                eos_free(name);
                 eos_storage_file_close(fp);
                 EOS_LOG_E("Failed to seek to file data for %s", name);
                 return EOS_ERR_FILE_ERROR;
@@ -351,7 +335,6 @@ eos_result_t eos_pkg_mgr_unpack(const char *pkg_path, const char *output_path, c
                 if (r <= 0)
                 {
                     eos_storage_file_close(out_fp);
-                    eos_free(name);
                     eos_storage_file_close(fp);
                     EOS_LOG_E("Failed to read file data for %s", name);
                     return EOS_ERR_FILE_ERROR;
@@ -359,7 +342,6 @@ eos_result_t eos_pkg_mgr_unpack(const char *pkg_path, const char *output_path, c
                 if (eos_storage_file_write(out_fp, buffer, r) != r)
                 {
                     eos_storage_file_close(out_fp);
-                    eos_free(name);
                     eos_storage_file_close(fp);
                     EOS_LOG_E("Failed to write file data for %s", name);
                     return EOS_ERR_FILE_ERROR;
@@ -373,14 +355,11 @@ eos_result_t eos_pkg_mgr_unpack(const char *pkg_path, const char *output_path, c
             // Restore the file table position for the next entry before reading the next file name
             if (eos_storage_file_seek(fp, next_entry_pos) != 0)
             {
-                eos_free(name);
                 eos_storage_file_close(fp);
                 EOS_LOG_E("Failed to restore table position after extracting %s", name);
                 return EOS_ERR_FILE_ERROR;
             }
         }
-
-        eos_free(name);
 
         if (is_dir)
         {

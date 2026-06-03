@@ -22,7 +22,7 @@
 /* Macros and Definitions -------------------------------------*/
 typedef struct
 {
-    char *path;
+    char path[EOS_FS_PATH_MAX];
     uint8_t *data;
     size_t data_size;
 } eos_dfw_cache_t;
@@ -68,8 +68,8 @@ bool eos_dfw_write(const char *path, const uint8_t *data, size_t data_size)
         EOS_LOG_I("Cache not found");
         cache = eos_malloc_zeroed(sizeof(eos_dfw_cache_t));
         EOS_CHECK_PTR_RETURN_VAL(cache, false);
-        cache->path = eos_malloc(strlen(path) + 1);
-        strcpy(cache->path, path);
+        strncpy(cache->path, path, EOS_FS_PATH_MAX - 1);
+        cache->path[EOS_FS_PATH_MAX - 1] = '\0';
         cache->data = eos_malloc(data_size + 1);
         memcpy(cache->data, data, data_size);
         cache->data[data_size] = '\0';
@@ -117,7 +117,6 @@ void eos_dfw_sync(void)
         {
             EOS_LOG_I("Write done");
         }
-        eos_free(cache->path);
         eos_free(cache->data);
         eos_free(cache);
     }
