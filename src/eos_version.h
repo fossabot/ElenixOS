@@ -19,9 +19,9 @@ extern "C" {
 /* Public macros ----------------------------------------------*/
 
 #define ELENIX_OS_VERSION_MAJOR 0
-#define ELENIX_OS_VERSION_MINOR 3
+#define ELENIX_OS_VERSION_MINOR 4
 #define ELENIX_OS_VERSION_PATCH 0
-#define ELENIX_OS_VERSION_INFO "alpha.1"
+#define ELENIX_OS_VERSION_INFO "alpha"
 
 #define STRINGIFY(x) #x
 #define VERSION_STRING(major, minor, patch, info) STRINGIFY(major) "." STRINGIFY(minor) "." STRINGIFY(patch) "-" info
