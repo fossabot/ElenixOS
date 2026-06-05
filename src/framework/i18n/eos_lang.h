@@ -112,6 +112,17 @@ typedef enum {
     STR_ID_SENSOR_STEP,      /**< Step counter sensor       */
     STR_ID_SENSOR_FORCE,     /**< Force sensor         */
     STR_ID_SENSOR_BAT,        /**< Battery level sensor    */
+    STR_ID_SETTINGS_PASSWORD,
+    STR_ID_SETTINGS_PASSWORD_ENABLE,
+    STR_ID_SETTINGS_PASSWORD_DISABLE,
+    STR_ID_SETTINGS_PASSWORD_CHANGE,
+    STR_ID_SETTINGS_PASSWORD_SIMPLE,
+    STR_ID_SETTINGS_PASSWORD_SIMPLE_COMMENT,
+    STR_ID_LOCK_SCREEN_ENTER_PASSCODE,
+    STR_ID_LOCK_SCREEN_WRONG_PASSCODE,
+    STR_ID_SETTINGS_PASSWORD_ENTER_NEW,
+    STR_ID_SETTINGS_PASSWORD_REENTER,
+    STR_ID_SETTINGS_PASSWORD_MISMATCH,
     /* New string IDs can be added here */
     STR_ID_MAX_NUMBER   /**< Maximum string ID */
 } lang_string_id_t;

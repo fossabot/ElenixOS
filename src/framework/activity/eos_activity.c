@@ -129,6 +129,8 @@ static const char *_activity_type_to_str(eos_activity_type_t type)
         return "WATCHFACE";
     case EOS_ACTIVITY_TYPE_WATCHFACE_LIST:
         return "WATCHFACE_LIST";
+    case EOS_ACTIVITY_TYPE_LOCK_SCREEN:
+        return "LOCK_SCREEN";
     default:
         return "UNKNOWN";
     }
@@ -387,7 +389,10 @@ static void _anim_clean_up_activity_deferred(void *user_data)
     }
     else if (!eos_activity_is_app_header_visible(anim_ctx->to) && eos_activity_is_app_header_visible(anim_ctx->from))
     {
-        eos_app_header_hide();
+        if (!eos_app_header_is_attached_to_view())
+        {
+            eos_app_header_hide();
+        }
     }
 
     if (anim_ctx->to && anim_ctx->to->snapshot_ref_count == 0)

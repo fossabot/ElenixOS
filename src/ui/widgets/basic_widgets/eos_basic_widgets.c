@@ -829,6 +829,7 @@ lv_obj_t *eos_list_add_button(lv_obj_t *list, const void *icon, const char *txt)
     lv_obj_t *obj = _list_btn_container_create(list);
     lv_obj_t *img, *label;
     lv_obj_add_flag(obj, LV_OBJ_FLAG_USER_1);
+    lv_obj_remove_flag(obj, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
     if (icon)
     {
         img = lv_image_create(obj);
@@ -986,6 +987,7 @@ lv_obj_t *eos_list_add_switch(lv_obj_t *list, const char *txt)
     lv_obj_set_height(sw, _LIST_SWITCH_WIDTH);
     lv_obj_update_layout(sw);
     lv_obj_set_width(sw, _LIST_SWITCH_HEIGHT);
+    lv_obj_remove_flag(sw, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
     lv_obj_add_event_cb(container, _list_switch_container_clicked_cb, LV_EVENT_CLICKED, sw);
 
     return sw;

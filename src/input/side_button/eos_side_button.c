@@ -12,6 +12,7 @@
 #include "input/eos_input.h"
 #include "eos_control_center.h"
 #include "eos_service_pm.h"
+#include "eos_service_lock.h"
 /* Macros and Definitions -------------------------------------*/
 
 /* Variables --------------------------------------------------*/
@@ -26,6 +27,12 @@ static void _side_button_async_cb(void *user_data)
         return;
     }
     eos_pm_reset_timer();
+
+    /* Security: block all side button actions while lock screen is active */
+    if (eos_lock_screen_is_active()) {
+        return;
+    }
+
     eos_button_state_t state = (eos_button_state_t)(intptr_t)user_data;
     switch (state)
     {

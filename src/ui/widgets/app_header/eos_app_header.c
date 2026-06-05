@@ -580,6 +580,12 @@ void eos_app_header_detach_from_view(void)
     app_header->attached_to_view = false;
 }
 
+bool eos_app_header_is_attached_to_view(void)
+{
+    EOS_CHECK_PTR_RETURN_VAL(app_header, false);
+    return app_header->attached_to_view;
+}
+
 bool eos_app_header_is_visible(void)
 {
     EOS_CHECK_PTR_RETURN_VAL(app_header, false);

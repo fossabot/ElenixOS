@@ -18,6 +18,7 @@
 #include "eos_app_list.h"
 #include "eos_crown.h"
 #include "eos_service_pm.h"
+#include "eos_service_lock.h"
 #include "eos_stack.h"
 
 /* Macros and Definitions -------------------------------------*/
@@ -209,9 +210,15 @@ void eos_chrome_manager_remove_overlay(const eos_chrome_overlay_t *overlay)
 
 void eos_chrome_manager_handle_crown_click(void)
 {
+    /* Wake up first if sleeping — always allow crown to wake, even on lock screen */
     if (eos_pm_get_state() == EOS_PM_SLEEP)
     {
         eos_pm_wake_up();
+        return;
+    }
+
+    /* Don't allow crown click to bypass lock screen */
+    if (eos_lock_screen_is_active()) {
         return;
     }
 

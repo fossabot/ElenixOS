@@ -43,9 +43,14 @@
 #include "eos_service_display.h"
 #include "eos_activity.h"
 #include "eos_input_page.h"
+#include "eos_sha256.h"
+#include "eos_service_lock.h"
+#include "eos_mem.h"
+#include "eos_numpad.h"
 
 /* Macros and Definitions -------------------------------------*/
 #define _BRIGHTNESS_SMOOTH_DURATION 200
+#define _SETTINGS_PASSCODE_MAGIC 0x53504D47U
 /* Variables --------------------------------------------------*/
 
 /* Function Implementations -----------------------------------*/
@@ -644,6 +649,570 @@ static void _settings_view_apps(lv_event_t *e)
     eos_activity_enter(a);
 }
 
+/************************** Password Settings **************************/
+
+typedef struct
+{
+    uint32_t magic;
+    eos_activity_t *activity;
+    lv_obj_t *title_label;
+    eos_numpad_t *numpad;
+} _settings_numpad_ctx_t;
+
+typedef struct _password_flow_state_t
+{
+    char step1_digits[EOS_NUMPAD_MAX_DIGITS + 1];
+    uint8_t target_length;
+    bool is_changing; /* true = change flow, false = create flow */
+    uint8_t old_attempts;
+    _settings_numpad_ctx_t *numpad_ctx; /* For reusing the same page */
+} _password_flow_state_t;
+
+/* References to password sub-page widgets that need dynamic updates */
+typedef struct _password_subpage_refs_t {
+    lv_obj_t *enable_sw;
+    lv_obj_t *change_btn;
+    lv_obj_t *simple_sw;
+    lv_obj_t *list;
+} _password_subpage_refs_t;
+
+static void _password_subpage_refresh(_password_subpage_refs_t *refs);
+
+/* Forward declarations for password numpad */
+static void _numpad_async_back_cb(void *user_data);
+static void _password_create_step1_cb(const char *digits, void *user_data);
+static void _password_flow_cancel_step1_cb(void *user_data);
+static void _password_enable_sw_cb(lv_event_t *e);
+static void _password_simple_sw_cb(lv_event_t *e);
+static void _password_change_clicked_cb(lv_event_t *e);
+static void _start_password_creation(uint8_t target_length);
+static void _start_creation_async_cb(void *user_data);
+static void _settings_view_password(lv_event_t *e);
+
+/* ---- Password Numpad Helper ---- */
+
+static void _numpad_async_back_cb(void *user_data)
+{
+    (void)user_data;
+    /* Reset input devices to avoid accessing destroyed widgets */
+    lv_indev_t *indev = NULL;
+    while ((indev = lv_indev_get_next(indev)) != NULL) {
+        lv_indev_reset(indev, NULL);
+    }
+    eos_activity_back();
+}
+
+static void _settings_numpad_on_destroy(eos_activity_t *activity)
+{
+    _settings_numpad_ctx_t *ctx = (_settings_numpad_ctx_t *)eos_activity_get_user_data(activity);
+    if (ctx) {
+        eos_numpad_delete(ctx->numpad);
+        eos_free(ctx);
+        eos_activity_set_user_data(activity, NULL);
+    }
+}
+
+/**
+ * @brief Show a password numpad page.
+ * @param title_str Title text (e.g., "Enter New Passcode")
+ * @param target_length 4 or 6 digits
+ * @param on_complete Called when all digits are entered
+ * @param on_cancel Called when user presses cancel (NULL = just go back)
+ * @param user_data User data passed to callbacks
+ */
+static void _show_password_numpad(const char *title_str, uint8_t target_length,
+                                   void (*on_complete)(const char *digits, void *user_data),
+                                   void (*on_cancel)(void *user_data),
+                                   void *user_data)
+{
+    static const eos_activity_lifecycle_t lifecycle = {
+        .on_destroy = _settings_numpad_on_destroy,
+    };
+
+    eos_activity_t *activity = eos_activity_create(&lifecycle);
+    if (!activity) return;
+
+    eos_activity_set_type(activity, EOS_ACTIVITY_TYPE_APP);
+    eos_activity_set_app_header_visible(activity, false);
+
+    _settings_numpad_ctx_t *ctx = (_settings_numpad_ctx_t *)eos_malloc_zeroed(sizeof(_settings_numpad_ctx_t));
+    if (!ctx) {
+        eos_activity_back();
+        return;
+    }
+
+    ctx->magic = _SETTINGS_PASSCODE_MAGIC;
+    ctx->activity = activity;
+    eos_activity_set_user_data(activity, ctx);
+
+    /* Connect flow state back to the numpad ctx for page reuse */
+    if (user_data) {
+        ((_password_flow_state_t *)user_data)->numpad_ctx = ctx;
+    }
+
+    /* Build UI */
+    lv_obj_t *view = eos_activity_get_view(activity);
+    if (!view) {
+        eos_free(ctx);
+        eos_activity_back();
+        return;
+    }
+
+    lv_obj_set_size(view, lv_pct(100), lv_pct(100));
+    lv_obj_set_style_bg_color(view, lv_color_black(), 0);
+    lv_obj_set_style_pad_all(view, 0, 0);
+    lv_obj_set_style_border_width(view, 0, 0);
+    lv_obj_add_flag(view, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+
+    /* Flex container for main content */
+    lv_obj_t *container = lv_obj_create(view);
+    lv_obj_set_size(container, lv_pct(100), lv_pct(100));
+    lv_obj_set_style_bg_opa(container, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(container, 0, 0);
+    lv_obj_set_style_pad_all(container, 0, 0);
+    lv_obj_add_flag(container, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+    lv_obj_set_flex_flow(container, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(container,
+                          LV_FLEX_ALIGN_SPACE_EVENLY,
+                          LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+
+    /* Title */
+    ctx->title_label = lv_label_create(container);
+    lv_label_set_text(ctx->title_label, title_str);
+    lv_obj_set_style_text_color(ctx->title_label, EOS_COLOR_WHITE, 0);
+
+    ctx->numpad = eos_numpad_create(container, target_length, true,
+                                    on_complete, on_cancel, user_data);
+
+    eos_activity_enter(activity);
+}
+
+/* ---- Password Settings Page ---- */
+
+/**
+ * @brief Save password hash to config
+ */
+static void _save_password_hash(const char *digits)
+{
+    uint8_t hash[EOS_SHA256_DIGEST_SIZE];
+    eos_sha256((const uint8_t *)digits, strlen(digits), hash);
+
+    char hex[EOS_SHA256_HEX_STR_SIZE];
+    eos_sha256_to_hex(hash, hex, sizeof(hex));
+
+    eos_config_set_string(EOS_CONFIG_KEY_PASSWORD_HASH_STR, hex);
+    eos_config_set_bool(EOS_CONFIG_KEY_PASSWORD_ENABLED_BOOL, true);
+    EOS_LOG_I("Password saved");
+}
+
+/**
+ * @brief Callback for password creation step 2 (re-enter)
+ */
+static void _password_create_step2_cb(const char *digits, void *user_data);
+
+/* Async callback data for deferred navigation on success */
+typedef struct {
+    _password_flow_state_t *state;
+    int back_count;
+} _password_finish_data_t;
+
+static void _password_finish_async_cb(void *user_data)
+{
+    _password_finish_data_t *data = (_password_finish_data_t *)user_data;
+    if (!data) return;
+    if (data->state) eos_free(data->state);
+
+    lv_indev_t *indev = NULL;
+    while ((indev = lv_indev_get_next(indev)) != NULL) {
+        lv_indev_reset(indev, NULL);
+    }
+
+    for (int i = 0; i < data->back_count; i++) {
+        eos_activity_back();
+    }
+    eos_free(data);
+}
+
+/* ---- Numpad Page Reconfiguration for Step 2 ---- */
+
+static void _settings_numpad_reconfigure(_settings_numpad_ctx_t *ctx,
+                                          const char *new_title,
+                                          void (*new_on_complete)(const char *, void *),
+                                          void (*new_on_cancel)(void *),
+                                          void *new_user_data)
+{
+    if (!ctx || !ctx->numpad) return;
+
+    /* Change title text */
+    if (ctx->title_label && lv_obj_is_valid(ctx->title_label)) {
+        lv_label_set_text(ctx->title_label, new_title);
+    }
+
+    /* Clear dots */
+    eos_numpad_clear(ctx->numpad);
+
+    /* Update callbacks and user data */
+    ctx->numpad->on_complete = new_on_complete;
+    ctx->numpad->on_cancel = new_on_cancel;
+    ctx->numpad->user_data = new_user_data;
+}
+
+/* ---- Flow Callbacks ---- */
+
+static void _password_flow_cancel_step1_cb(void *user_data)
+{
+    _password_flow_state_t *state = (_password_flow_state_t *)user_data;
+    if (state) eos_free(state);
+    lv_async_call(_numpad_async_back_cb, NULL);
+}
+
+static void _password_flow_cancel_step2_cb(void *user_data)
+{
+    /* Go back to step1 (reconfigure current page back to step1) */
+    _password_flow_state_t *state = (_password_flow_state_t *)user_data;
+    if (!state || !state->numpad_ctx) {
+        lv_async_call(_numpad_async_back_cb, NULL);
+        return;
+    }
+    state->step1_digits[0] = '\0';
+    const char *title = eos_lang_get_text(STR_ID_SETTINGS_PASSWORD_ENTER_NEW);
+    _settings_numpad_reconfigure(state->numpad_ctx, title,
+                                  _password_create_step1_cb,
+                                  _password_flow_cancel_step1_cb, state);
+}
+
+static void _password_create_step1_cb(const char *digits, void *user_data)
+{
+    _password_flow_state_t *state = (_password_flow_state_t *)user_data;
+    if (!state || !state->numpad_ctx) return;
+
+    /* Save step 1 digits */
+    strncpy(state->step1_digits, digits, EOS_NUMPAD_MAX_DIGITS);
+    state->step1_digits[EOS_NUMPAD_MAX_DIGITS] = '\0';
+
+    /* Reuse current page for step 2: just change title and clear dots */
+    const char *title = eos_lang_get_text(STR_ID_SETTINGS_PASSWORD_REENTER);
+    _settings_numpad_reconfigure(state->numpad_ctx, title,
+                                  _password_create_step2_cb,
+                                  _password_flow_cancel_step2_cb, state);
+}
+
+static void _password_create_step2_cb(const char *digits, void *user_data)
+{
+    _password_flow_state_t *state = (_password_flow_state_t *)user_data;
+    if (!state) return;
+
+    if (strcmp(digits, state->step1_digits) == 0) {
+        /* Match! Save password, pop back to password sub-page */
+        _save_password_hash(digits);
+        eos_toast_show_char_icon(RI_CHECKBOX_CIRCLE_FILL, EOS_COLOR_GREEN,
+                                 "Password enabled");
+        _password_finish_data_t *data = (_password_finish_data_t *)eos_malloc(sizeof(_password_finish_data_t));
+        if (data) {
+            data->state = state;
+            /* Creation: pop step1 (current reused page) = 1 level → sub-page
+             * Change:   pop step1 + verify-old = 2 levels → sub-page */
+            data->back_count = state->is_changing ? 2 : 1;
+            lv_async_call(_password_finish_async_cb, data);
+        } else {
+            eos_free(state);
+        }
+    } else {
+        /* Mismatch: clear digits, show toast, go back to step1 on same page */
+        eos_toast_show_char_icon(RI_ERROR_WARNING_FILL, EOS_COLOR_RED,
+                                 eos_lang_get_text(STR_ID_SETTINGS_PASSWORD_MISMATCH));
+        state->step1_digits[0] = '\0';
+        const char *title = eos_lang_get_text(STR_ID_SETTINGS_PASSWORD_ENTER_NEW);
+        _settings_numpad_reconfigure(state->numpad_ctx, title,
+                                      _password_create_step1_cb,
+                                      _password_flow_cancel_step1_cb, state);
+    }
+}
+
+/* Mirrors eos_list_transition_state_t from eos_basic_widgets.c for direct access */
+typedef struct {
+    lv_obj_t *list;
+    lv_obj_t *button;
+    eos_activity_t *activity;
+    uint32_t sequence;
+} _local_transition_state_t;
+
+/**
+ * @brief Ensure list transition state is set so the animation has a target.
+ */
+static void _ensure_list_transition_state(eos_activity_t *subpage_activity)
+{
+    if (!subpage_activity) return;
+
+    lv_obj_t *view = eos_activity_get_view(subpage_activity);
+    if (!view || !lv_obj_is_valid(view)) return;
+
+    /* Find the list in the sub-page view tree */
+    lv_obj_t *list = NULL;
+    uint32_t child_cnt = lv_obj_get_child_count(view);
+    for (uint32_t i = 0; i < child_cnt; i++) {
+        lv_obj_t *child = lv_obj_get_child(view, i);
+        if (child && lv_obj_check_type(child, &lv_list_class)) {
+            list = child;
+            break;
+        }
+    }
+    if (!list) return;
+
+    /* Find the switch container (has USER_1) and set it as transition target */
+    uint32_t list_child_cnt = lv_obj_get_child_count(list);
+    for (uint32_t i = 0; i < list_child_cnt; i++) {
+        lv_obj_t *item = lv_obj_get_child(list, i);
+        if (item && lv_obj_has_flag(item, LV_OBJ_FLAG_USER_1)) {
+            _local_transition_state_t *state = (_local_transition_state_t *)lv_obj_get_user_data(list);
+            if (state && state->list == list) {
+                state->button = item;
+                state->activity = subpage_activity;
+                state->sequence++; /* Ensure non-zero so select picks it up */
+            }
+            return;
+        }
+    }
+}
+
+static void _start_creation_async_cb(void *user_data)
+{
+    uint8_t target_length = (uint8_t)(uintptr_t)user_data;
+    /* Ensure list transition state is recorded before creating activity */
+    _ensure_list_transition_state(eos_activity_get_current());
+    _start_password_creation(target_length);
+}
+
+static void _start_password_creation(uint8_t target_length)
+{
+    _password_flow_state_t *state = (_password_flow_state_t *)eos_malloc_zeroed(sizeof(_password_flow_state_t));
+    if (!state) return;
+    state->target_length = target_length;
+    const char *title = eos_lang_get_text(STR_ID_SETTINGS_PASSWORD_ENTER_NEW);
+    _show_password_numpad(title, target_length, _password_create_step1_cb,
+                          _password_flow_cancel_step1_cb, state);
+}
+
+/* ---- Password Change Flow ---- */
+
+static void _password_change_cancel_cb(void *user_data)
+{
+    _password_flow_state_t *state = (_password_flow_state_t *)user_data;
+    if (state) eos_free(state);
+    lv_async_call(_numpad_async_back_cb, NULL);
+}
+
+static void _password_change_new_step1_cb(const char *digits, void *user_data)
+{
+    _password_flow_state_t *state = (_password_flow_state_t *)user_data;
+    if (!state || !state->numpad_ctx) return;
+
+    strncpy(state->step1_digits, digits, EOS_NUMPAD_MAX_DIGITS);
+    state->step1_digits[EOS_NUMPAD_MAX_DIGITS] = '\0';
+
+    /* Reuse current page for re-enter */
+    const char *title = eos_lang_get_text(STR_ID_SETTINGS_PASSWORD_REENTER);
+    _settings_numpad_reconfigure(state->numpad_ctx, title,
+                                  _password_create_step2_cb,
+                                  _password_flow_cancel_step2_cb, state);
+}
+
+static void _password_change_verify_old_cb(const char *digits, void *user_data)
+{
+    _password_flow_state_t *state = (_password_flow_state_t *)user_data;
+    if (!state) return;
+
+    uint8_t hash[EOS_SHA256_DIGEST_SIZE];
+    eos_sha256((const uint8_t *)digits, strlen(digits), hash);
+    char entered_hex[EOS_SHA256_HEX_STR_SIZE];
+    eos_sha256_to_hex(hash, entered_hex, sizeof(entered_hex));
+
+    char *stored_hash = eos_config_get_string(EOS_CONFIG_KEY_PASSWORD_HASH_STR, "");
+    bool match = (stored_hash && strcmp(entered_hex, stored_hash) == 0);
+    eos_free(stored_hash);
+
+    if (match) {
+        /* Reuse current page for new password entry */
+        state->step1_digits[0] = '\0';
+        const char *title = eos_lang_get_text(STR_ID_SETTINGS_PASSWORD_ENTER_NEW);
+        _settings_numpad_reconfigure(state->numpad_ctx, title,
+                                      _password_change_new_step1_cb,
+                                      _password_change_cancel_cb, state);
+    } else {
+        state->old_attempts++;
+        eos_toast_show_char_icon(RI_ERROR_WARNING_FILL, EOS_COLOR_RED,
+                                 eos_lang_get_text(STR_ID_LOCK_SCREEN_WRONG_PASSCODE));
+        if (state->old_attempts >= 3) {
+            eos_free(state);
+        }
+        lv_async_call(_numpad_async_back_cb, NULL);
+    }
+}
+
+static void _start_password_change(void)
+{
+    _password_flow_state_t *state = (_password_flow_state_t *)eos_malloc_zeroed(sizeof(_password_flow_state_t));
+    if (!state) return;
+    state->is_changing = true;
+    bool simple = eos_config_get_bool(EOS_CONFIG_KEY_PASSWORD_SIMPLE_BOOL, true);
+    state->target_length = simple ? 4 : 6;
+    const char *title = "Enter Old Passcode";
+    _show_password_numpad(title, state->target_length, _password_change_verify_old_cb,
+                          _password_change_cancel_cb, state);
+}
+
+/* ---- Password Settings Sub-Page ---- */
+
+static void _password_subpage_on_destroy(eos_activity_t *activity)
+{
+    _password_subpage_refs_t *refs = (_password_subpage_refs_t *)eos_activity_get_user_data(activity);
+    if (refs) eos_free(refs);
+}
+
+static void _password_subpage_refresh(_password_subpage_refs_t *refs)
+{
+    if (!refs) return;
+    bool is_enabled = eos_config_get_bool(EOS_CONFIG_KEY_PASSWORD_ENABLED_BOOL, false);
+    char *hash = eos_config_get_string(EOS_CONFIG_KEY_PASSWORD_HASH_STR, "");
+    bool has_hash = (hash && strlen(hash) > 0);
+    eos_free(hash);
+
+    /* Update Enable switch */
+    if (refs->enable_sw && lv_obj_is_valid(refs->enable_sw)) {
+        if (is_enabled && has_hash) {
+            lv_obj_add_state(refs->enable_sw, LV_STATE_CHECKED);
+        } else {
+            lv_obj_remove_state(refs->enable_sw, LV_STATE_CHECKED);
+        }
+    }
+
+    /* Enable/disable Change Password button (disabled when no password set) */
+    if (refs->change_btn && lv_obj_is_valid(refs->change_btn)) {
+        if (is_enabled && has_hash) {
+            lv_obj_remove_state(refs->change_btn, LV_STATE_DISABLED);
+        } else {
+            lv_obj_add_state(refs->change_btn, LV_STATE_DISABLED);
+        }
+    }
+
+    /* Enable/disable Simple Password switch (container + switch) */
+    if (refs->simple_sw && lv_obj_is_valid(refs->simple_sw)) {
+        lv_obj_t *container = lv_obj_get_parent(refs->simple_sw);
+        if (is_enabled && has_hash) {
+            lv_obj_add_state(refs->simple_sw, LV_STATE_DISABLED);
+            if (container && lv_obj_is_valid(container)) {
+                lv_obj_add_state(container, LV_STATE_DISABLED);
+            }
+        } else {
+            lv_obj_remove_state(refs->simple_sw, LV_STATE_DISABLED);
+            if (container && lv_obj_is_valid(container)) {
+                lv_obj_remove_state(container, LV_STATE_DISABLED);
+            }
+        }
+    }
+}
+
+static void _password_subpage_on_resume(eos_activity_t *activity)
+{
+    _password_subpage_refs_t *refs = (_password_subpage_refs_t *)eos_activity_get_user_data(activity);
+    _password_subpage_refresh(refs);
+}
+
+static void _password_enable_sw_cb(lv_event_t *e)
+{
+    lv_obj_t *sw = lv_event_get_target(e);
+    _password_subpage_refs_t *refs = (_password_subpage_refs_t *)lv_event_get_user_data(e);
+    bool is_enabled = lv_obj_has_state(sw, LV_STATE_CHECKED);
+
+    if (is_enabled) {
+        /* Defer creation so it doesn't interfere with list animation */
+        bool simple = eos_config_get_bool(EOS_CONFIG_KEY_PASSWORD_SIMPLE_BOOL, true);
+        lv_async_call((lv_async_cb_t)_start_creation_async_cb, (void *)(uintptr_t)(simple ? 4 : 6));
+    } else {
+        eos_config_set_bool(EOS_CONFIG_KEY_PASSWORD_ENABLED_BOOL, false);
+        eos_config_set_string(EOS_CONFIG_KEY_PASSWORD_HASH_STR, "");
+        eos_toast_show_char_icon(RI_CHECKBOX_CIRCLE_FILL, EOS_COLOR_GREEN,
+                                 "Password disabled");
+        _password_subpage_refresh(refs);
+    }
+}
+
+static void _password_simple_sw_cb(lv_event_t *e)
+{
+    lv_obj_t *sw = lv_event_get_target(e);
+    bool simple = lv_obj_has_state(sw, LV_STATE_CHECKED);
+    eos_config_set_bool(EOS_CONFIG_KEY_PASSWORD_SIMPLE_BOOL, simple);
+}
+
+static void _password_change_clicked_cb(lv_event_t *e)
+{
+    (void)e;
+    _start_password_change();
+}
+
+static void _settings_view_password(lv_event_t *e)
+{
+    (void)e;
+    static const eos_activity_lifecycle_t lifecycle = {
+        .on_destroy = _password_subpage_on_destroy,
+        .on_enter = _password_subpage_on_resume,
+        .on_resume = _password_subpage_on_resume,
+    };
+
+    eos_activity_t *a = eos_activity_create(&lifecycle);
+    EOS_CHECK_PTR_RETURN(a);
+    lv_obj_t *view = eos_activity_get_view(a);
+    EOS_CHECK_PTR_RETURN(view);
+    eos_activity_set_title_id(a, STR_ID_SETTINGS_PASSWORD);
+    eos_activity_set_app_header_visible(a, true);
+
+    _password_subpage_refs_t *refs = (_password_subpage_refs_t *)eos_malloc_zeroed(sizeof(_password_subpage_refs_t));
+    eos_activity_set_user_data(a, refs);
+
+    lv_obj_t *list = eos_list_create(view);
+    refs->list = list;
+
+    bool is_enabled = eos_config_get_bool(EOS_CONFIG_KEY_PASSWORD_ENABLED_BOOL, false);
+    char *hash = eos_config_get_string(EOS_CONFIG_KEY_PASSWORD_HASH_STR, "");
+    bool has_hash = (hash && strlen(hash) > 0);
+
+    /* Enable Password switch */
+    refs->enable_sw = _auto_get_config_switch_create(
+        list, eos_lang_get_text(STR_ID_SETTINGS_PASSWORD_ENABLE),
+        EOS_CONFIG_KEY_PASSWORD_ENABLED_BOOL, false);
+    lv_obj_add_event_cb(refs->enable_sw, _password_enable_sw_cb, LV_EVENT_VALUE_CHANGED, refs);
+    /* Tag the switch container so list transition animation targets this row */
+    lv_obj_t *enable_container = lv_obj_get_parent(refs->enable_sw);
+    if (enable_container) lv_obj_add_flag(enable_container, LV_OBJ_FLAG_USER_1);
+
+    eos_list_add_placeholder(list, EOS_LIST_SECTION_PLACEHOLDER_HEIGHT);
+
+    /* Change Password button (disabled when no password) */
+    refs->change_btn = eos_list_add_entry_button_str_id(
+        list, STR_ID_SETTINGS_PASSWORD_CHANGE);
+    lv_obj_add_event_cb(refs->change_btn, _password_change_clicked_cb, LV_EVENT_CLICKED, NULL);
+    if (!is_enabled || !has_hash) {
+        lv_obj_add_state(refs->change_btn, LV_STATE_DISABLED);
+    }
+    eos_list_add_placeholder(list, EOS_LIST_SECTION_PLACEHOLDER_HEIGHT);
+
+    /* Simple Password switch (disabled when password is set) */
+    refs->simple_sw = _auto_get_config_switch_create(
+        list, eos_lang_get_text(STR_ID_SETTINGS_PASSWORD_SIMPLE),
+        EOS_CONFIG_KEY_PASSWORD_SIMPLE_BOOL, true);
+    lv_obj_add_event_cb(refs->simple_sw, _password_simple_sw_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    eos_list_add_comment(list, eos_lang_get_text(STR_ID_SETTINGS_PASSWORD_SIMPLE_COMMENT));
+    if (is_enabled && has_hash) {
+        lv_obj_add_state(refs->simple_sw, LV_STATE_DISABLED);
+        lv_obj_t *simple_container = lv_obj_get_parent(refs->simple_sw);
+        if (simple_container) lv_obj_add_state(simple_container, LV_STATE_DISABLED);
+    }
+
+    eos_free(hash);
+    eos_activity_enter(a);
+}
+
 /************************** General Settings **************************/
 
 static void _language_roller_event_handler(lv_event_t *e)
@@ -872,6 +1441,9 @@ void eos_settings_enter(void)
     // Sound and haptics settings
     btn = eos_list_add_round_icon_button_str_id(settings_list, EOS_COLOR_PINK, RI_VOLUME_UP_FILL, STR_ID_SETTINGS_SOUNDS_AND_HAPTICS);
     lv_obj_add_event_cb(btn, _settings_view_sound_and_haptics, LV_EVENT_CLICKED, NULL);
+    // Password settings
+    btn = eos_list_add_round_icon_button_str_id(settings_list, EOS_COLOR_TEAL_BLUE, RI_LOCK_LINE, STR_ID_SETTINGS_PASSWORD);
+    lv_obj_add_event_cb(btn, _settings_view_password, LV_EVENT_CLICKED, NULL);
     // App list
     btn = eos_list_add_round_icon_button_str_id(settings_list, EOS_COLOR_GREEN, RI_FILE_LIST_LINE, STR_ID_SETTINGS_APPS);
     lv_obj_add_event_cb(btn, _settings_view_apps, LV_EVENT_CLICKED, NULL);

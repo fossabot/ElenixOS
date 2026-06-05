@@ -75,6 +75,10 @@ void eos_app_header_attach_to_view(lv_obj_t *view);
  */
 void eos_app_header_detach_from_view(void);
 /**
+ * @brief Check if app header is currently attached to a view
+ */
+bool eos_app_header_is_attached_to_view(void);
+/**
  * @brief Play title change animation
  * @param from From which activity to switch
  * @param to Switch to which activity

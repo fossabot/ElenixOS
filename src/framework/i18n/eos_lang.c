@@ -106,6 +106,17 @@ const char *lang_en[STR_ID_MAX_NUMBER] = {
     [STR_ID_SENSOR_STEP] = "Step Counter",
     [STR_ID_SENSOR_FORCE] = "Force Sensor",
     [STR_ID_SENSOR_BAT] = "Battery Sensor",
+    [STR_ID_SETTINGS_PASSWORD] = "Password",
+    [STR_ID_SETTINGS_PASSWORD_ENABLE] = "Enable Password",
+    [STR_ID_SETTINGS_PASSWORD_DISABLE] = "Disable Password",
+    [STR_ID_SETTINGS_PASSWORD_CHANGE] = "Change Password",
+    [STR_ID_SETTINGS_PASSWORD_SIMPLE] = "Simple Password",
+    [STR_ID_SETTINGS_PASSWORD_SIMPLE_COMMENT] = "4-digit numeric passcode. Turn off for 6-digit.",
+    [STR_ID_LOCK_SCREEN_ENTER_PASSCODE] = "Enter Passcode",
+    [STR_ID_LOCK_SCREEN_WRONG_PASSCODE] = "Wrong Passcode",
+    [STR_ID_SETTINGS_PASSWORD_ENTER_NEW] = "Enter New Passcode",
+    [STR_ID_SETTINGS_PASSWORD_REENTER] = "Re-enter Passcode",
+    [STR_ID_SETTINGS_PASSWORD_MISMATCH] = "Passcodes do not match",
     // Add new string IDs and English translations here as needed
 };
 
@@ -195,7 +206,18 @@ const char *lang_zh[STR_ID_MAX_NUMBER] = {
     [STR_ID_SENSOR_NOISE] = "噪声传感器",
     [STR_ID_SENSOR_STEP] = "计步传感器",
     [STR_ID_SENSOR_FORCE] = "力传感器",
-    [STR_ID_SENSOR_BAT] = "Battery Sensor",
+    [STR_ID_SENSOR_BAT] = "电池传感器",
+    [STR_ID_SETTINGS_PASSWORD] = "密码",
+    [STR_ID_SETTINGS_PASSWORD_ENABLE] = "开启密码",
+    [STR_ID_SETTINGS_PASSWORD_DISABLE] = "关闭密码",
+    [STR_ID_SETTINGS_PASSWORD_CHANGE] = "更改密码",
+    [STR_ID_SETTINGS_PASSWORD_SIMPLE] = "简单密码",
+    [STR_ID_SETTINGS_PASSWORD_SIMPLE_COMMENT] = "开启后仅需4位数字密码。关闭后为6位。",
+    [STR_ID_LOCK_SCREEN_ENTER_PASSCODE] = "输入密码",
+    [STR_ID_LOCK_SCREEN_WRONG_PASSCODE] = "密码错误",
+    [STR_ID_SETTINGS_PASSWORD_ENTER_NEW] = "输入新密码",
+    [STR_ID_SETTINGS_PASSWORD_REENTER] = "再次输入密码",
+    [STR_ID_SETTINGS_PASSWORD_MISMATCH] = "两次输入的密码不一致",
     // Add new string IDs and Chinese translations here as needed
 };
 

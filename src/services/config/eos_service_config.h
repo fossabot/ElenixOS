@@ -33,6 +33,9 @@ extern "C" {
 #define EOS_CONFIG_KEY_WAKE_ON_RAISE_BOOL "wake_on_raise"
 #define EOS_CONFIG_KEY_VIBRATOR_STRENGTH_NUMBER "vibrator_strength"
 #define EOS_CONFIG_KEY_APP_ORDER_ARRAY "app_order"
+#define EOS_CONFIG_KEY_PASSWORD_HASH_STR "password_hash"
+#define EOS_CONFIG_KEY_PASSWORD_ENABLED_BOOL "password_enabled"
+#define EOS_CONFIG_KEY_PASSWORD_SIMPLE_BOOL "password_simple"
 /************************** Default values **************************/
 #define EOS_CONFIG_DEFAULT_DEVICE_NAME "Elenix Watch"
 /* Default language string is determined by EOS_CONFIG_DEFAULT_LANGUAGE in eos_config.h */

@@ -152,6 +152,10 @@ void _init_style_roller(void)
 static void _theme_apply_cb(lv_theme_t *th, lv_obj_t *obj)
 {
     LV_UNUSED(th);
+
+    /* Disable SCROLL_ON_FOCUS for all objects */
+    lv_obj_clear_flag(obj, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
+
     /************************** LIST **************************/
     if (lv_obj_check_type(obj, &lv_label_class))
     {

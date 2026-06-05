@@ -25,6 +25,7 @@
 #include "eos_swipe_panel.h"
 #include "eos_service_display.h"
 #include "eos_service_config.h"
+#include "eos_service_lock.h"
 #include "eos_app.h"
 #include "script_engine_core.h"
 #include "spm.h"
@@ -181,6 +182,7 @@ void eos_init(void)
     eos_control_center_init();
     eos_chrome_manager_init();
     eos_service_pm_init();
+    eos_service_lock_init();
 
     eos_activity_t *watchface_activity = eos_watchface_get_activity();
     if (!watchface_activity)

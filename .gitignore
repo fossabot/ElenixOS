@@ -15,3 +15,5 @@ output/
 __pycache__/
 # Build files
 build/
+# Cache
+.cache/
