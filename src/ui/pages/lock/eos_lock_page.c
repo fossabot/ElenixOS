@@ -251,8 +251,16 @@ void eos_lock_page_hide(void)
     _destroy_lock_ui(_ctx);
     _ctx = NULL;
 
-    /* Restore header — underlying activity becomes visible again */
-    eos_app_header_show(NULL);
+    /* Restore header state based on underlying activity's setting */
+    eos_activity_t *current = eos_activity_get_current();
+    if (current && eos_activity_is_app_header_visible(current))
+    {
+        eos_app_header_show(current);
+    }
+    else
+    {
+        eos_app_header_hide();
+    }
 
     EOS_LOG_I("Lock screen hidden");
 }
