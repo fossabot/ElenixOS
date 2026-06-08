@@ -9,6 +9,7 @@
 [![Script Engine](https://img.shields.io/badge/Script_Engine-JerryScript-orange)](https://jerryscript.net)
 ![release](https://img.shields.io/github/v/tag/ElenixOS/ElenixOS)
 [![Simulator](https://img.shields.io/badge/Simulator-Try_it_Online-success)](https://simulator.elenixos.com/wasm/latest/main.html)
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FElenixOS%2FElenixOS.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2FElenixOS%2FElenixOS?ref=badge_shield)
 
 
 <div>
@@ -50,6 +51,9 @@ Please refer to the [ElenixOS Documentation](https://docs.elenixos.com/en).
 ## Open Source License
 
 This software is released under the Apache License 2.0 open-source license. This license allows individuals and organizations to freely use, modify, and distribute this software and its derivatives for commercial purposes, but requires retaining the original copyright notice, license text, and related statements. The software is provided "as is" without any form of warranty.
+
+
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FElenixOS%2FElenixOS.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2FElenixOS%2FElenixOS?ref=badge_large)
 
 ## Third-Party Software
 
