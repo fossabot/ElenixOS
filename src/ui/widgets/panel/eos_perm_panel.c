@@ -236,18 +236,8 @@ static void _perm_panel_container_delete_cb(lv_event_t *e)
 
 static void _perm_panel_pull_back(void)
 {
-    if (!_active_panel)
-        return;
-    EOS_LOG_D("PermPanel: pull_back triggered (side key / crown click)");
-    /* Side key or crown click while panel is open: dismiss via deny callback */
-    if (_active_panel->cfg.deny_cb)
-    {
-        _active_panel->cfg.deny_cb(_active_panel->deny_btn);
-    }
-    else
-    {
-        eos_perm_panel_delete(_active_panel);
-    }
+    /* No-op: absorb crown/side key events while permission panel is shown.
+     * The user must explicitly tap a button on the panel to dismiss it. */
 }
 
 static void _perm_panel_hide(void)

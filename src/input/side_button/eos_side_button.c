@@ -13,6 +13,7 @@
 #include "eos_control_center.h"
 #include "eos_service_pm.h"
 #include "eos_service_lock.h"
+#include "eos_chrome_manager.h"
 /* Macros and Definitions -------------------------------------*/
 
 /* Variables --------------------------------------------------*/
@@ -30,6 +31,11 @@ static void _side_button_async_cb(void *user_data)
 
     /* Security: block all side button actions while lock screen is active */
     if (eos_lock_screen_is_active()) {
+        return;
+    }
+
+    /* Absorb side key events when any overlay is open (e.g. permission panel) */
+    if (eos_chrome_manager_any_overlay_open()) {
         return;
     }
 
