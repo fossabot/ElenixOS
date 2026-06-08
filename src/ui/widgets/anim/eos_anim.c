@@ -14,6 +14,7 @@
 #include "eos_theme.h"
 #include "eos_port.h"
 #include "eos_mem.h"
+#include "eos_overlay_layer.h"
 
 /* Macros and Definitions -------------------------------------*/
 #define DEBUG_BLOCKER_VISIBLE 0
@@ -74,7 +75,7 @@ void eos_anim_blocker_show(void)
     if (is_blocker_show)
         return;
 
-    blocker = lv_obj_create(lv_layer_top());
+    blocker = lv_obj_create(eos_overlay_get_snapshot_layer());
     lv_obj_remove_style_all(blocker); // Remove style, keep transparent
 #if DEBUG_BLOCKER_VISIBLE
     lv_obj_set_style_bg_color(blocker, EOS_COLOR_MINT, 0);

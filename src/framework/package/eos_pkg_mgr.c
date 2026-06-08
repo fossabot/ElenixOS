@@ -38,6 +38,15 @@ void eos_pkg_free(script_pkg_t *pkg)
         eos_free((void *)pkg->script_str);
     if (pkg->base_path)
         eos_free((void *)pkg->base_path);
+    if (pkg->permissions)
+    {
+        for (uint8_t i = 0; i < pkg->permission_count; i++)
+        {
+            if (pkg->permissions[i])
+                eos_free((void *)pkg->permissions[i]);
+        }
+        eos_free(pkg->permissions);
+    }
     pkg->id = NULL;
     pkg->name = NULL;
     pkg->type = SCRIPT_TYPE_UNKNOWN;
@@ -46,6 +55,8 @@ void eos_pkg_free(script_pkg_t *pkg)
     pkg->description = NULL;
     pkg->script_str = NULL;
     pkg->base_path = NULL;
+    pkg->permissions = NULL;
+    pkg->permission_count = 0;
 }
 
 eos_result_t eos_pkg_read_header(const char *pkg_path, eos_pkg_header_t *header)

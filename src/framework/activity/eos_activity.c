@@ -21,6 +21,7 @@
 #include "eos_basic_widgets.h"
 #include "eos_app_header.h"
 #include "eos_chrome_manager.h"
+#include "eos_overlay_layer.h"
 #include "eos_event.h"
 #include "eos_image.h"
 /* Macros and Definitions -------------------------------------*/
@@ -812,7 +813,7 @@ lv_obj_t *eos_activity_take_snapshot(eos_activity_t *activity, bool include_head
         return NULL;
     }
 
-    lv_obj_t *snapshot_obj = lv_image_create(lv_layer_top());
+    lv_obj_t *snapshot_obj = lv_image_create(eos_overlay_get_snapshot_layer());
     if (!snapshot_obj)
     {
         eos_free(snapshot_node);

@@ -188,6 +188,21 @@ static void _pkg_clone_into(script_pkg_t *dst, const script_pkg_t *src)
     dst->description = src->description ? eos_strdup(src->description) : NULL;
     dst->script_str = src->script_str ? eos_strdup(src->script_str) : NULL;
     dst->base_path = src->base_path ? eos_strdup(src->base_path) : NULL;
+
+    /* Clone permissions array */
+    if (src->permissions && src->permission_count > 0)
+    {
+        dst->permissions = (const char **)eos_malloc(sizeof(const char *) * (src->permission_count + 1));
+        if (dst->permissions)
+        {
+            for (uint8_t i = 0; i < src->permission_count; i++)
+            {
+                dst->permissions[i] = src->permissions[i] ? eos_strdup(src->permissions[i]) : NULL;
+            }
+            dst->permissions[src->permission_count] = NULL;
+            dst->permission_count = src->permission_count;
+        }
+    }
 }
 
 static void _pkg_free_fields(script_pkg_t *p)
@@ -218,6 +233,27 @@ static void _pkg_free_fields(script_pkg_t *p)
     {
         eos_free((void *)p->description);
         p->description = NULL;
+    }
+    if (p->script_str)
+    {
+        eos_free((void *)p->script_str);
+        p->script_str = NULL;
+    }
+    if (p->base_path)
+    {
+        eos_free((void *)p->base_path);
+        p->base_path = NULL;
+    }
+    if (p->permissions)
+    {
+        for (uint8_t i = 0; i < p->permission_count; i++)
+        {
+            if (p->permissions[i])
+                eos_free((void *)p->permissions[i]);
+        }
+        eos_free(p->permissions);
+        p->permissions = NULL;
+        p->permission_count = 0;
     }
 }
 
@@ -620,6 +656,19 @@ script_pkg_type_t script_engine_get_current_script_type(void)
     return p ? p->type : SCRIPT_TYPE_UNKNOWN;
 }
 
+bool script_engine_has_permission(const char *perm_name)
+{
+    if (!perm_name) return false;
+    const script_pkg_t *p = _get_pkg();
+    if (!p || !p->permissions || p->permission_count == 0) return false;
+    for (uint8_t i = 0; i < p->permission_count; i++)
+    {
+        if (p->permissions[i] && strcmp(p->permissions[i], perm_name) == 0)
+            return true;
+    }
+    return false;
+}
+
 /* ---- Throwing / Registering / Helpers ---- */
 
 jerry_value_t script_engine_throw_error(const char *message)
@@ -967,6 +1016,61 @@ script_engine_result_t script_engine_get_manifest(const char *manifest_path, scr
     pkg->version = eos_strdup(version->valuestring);
     pkg->author = eos_strdup(author->valuestring);
     pkg->description = eos_strdup(description->valuestring);
+
+    /* Parse optional "permissions" array */
+    cJSON *permissions = cJSON_GetObjectItemCaseSensitive(root, "permissions");
+    if (permissions && cJSON_IsArray(permissions))
+    {
+        int perm_count = cJSON_GetArraySize(permissions);
+        if (perm_count > 0)
+        {
+            /* Known permission names for validation */
+            static const char *known_perms[] = {
+                "location", "sensor", "notification", "storage",
+                "bluetooth", "audio", "health", "contacts", "calendar", NULL
+            };
+
+            pkg->permissions = (const char **)eos_malloc(sizeof(const char *) * (perm_count + 1));
+            if (pkg->permissions)
+            {
+                int valid_idx = 0;
+                for (int i = 0; i < perm_count; i++)
+                {
+                    cJSON *perm_item = cJSON_GetArrayItem(permissions, i);
+                    if (cJSON_IsString(perm_item) && perm_item->valuestring)
+                    {
+                        /* Validate against known permission names */
+                        bool known = false;
+                        for (int k = 0; known_perms[k] != NULL; k++)
+                        {
+                            if (strcmp(perm_item->valuestring, known_perms[k]) == 0)
+                            {
+                                known = true;
+                                break;
+                            }
+                        }
+                        if (known)
+                        {
+                            pkg->permissions[valid_idx] = eos_strdup(perm_item->valuestring);
+                            valid_idx++;
+                        }
+                        else
+                        {
+                            EOS_LOG_W("Unknown permission in manifest: %s", perm_item->valuestring);
+                        }
+                    }
+                }
+                pkg->permissions[valid_idx] = NULL; /* NULL-terminate */
+                pkg->permission_count = (uint8_t)valid_idx;
+            }
+        }
+    }
+    else
+    {
+        pkg->permissions = NULL;
+        pkg->permission_count = 0;
+    }
+
     cJSON_Delete(root);
     return SE_OK;
 }

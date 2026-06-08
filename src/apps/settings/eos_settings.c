@@ -43,10 +43,12 @@
 #include "eos_service_display.h"
 #include "eos_activity.h"
 #include "eos_input_page.h"
+#include "eos_service_permission.h"
 #include "eos_sha256.h"
 #include "eos_service_lock.h"
 #include "eos_mem.h"
 #include "eos_numpad.h"
+#include "eos_panel.h"
 
 /* Macros and Definitions -------------------------------------*/
 #define _BRIGHTNESS_SMOOTH_DURATION 200
@@ -92,6 +94,17 @@ static eos_activity_t *_create_activity_with_header(lang_string_id_t id, lv_obj_
         *out_view = view;
     }
     return a;
+}
+
+/**
+ * @brief Generic LV_EVENT_DELETE handler that frees user_data (char* allocated with eos_strdup)
+ */
+static void _free_user_data_on_delete_cb(lv_event_t *e)
+{
+    void *user_data = lv_event_get_user_data(e);
+    if (user_data) {
+        eos_free(user_data);
+    }
 }
 
 /************************** Bluetooth **************************/
@@ -426,34 +439,276 @@ static void _settings_view_sound_and_haptics(lv_event_t *e)
 
 /************************** App List **************************/
 
+typedef struct {
+    const char *app_id;
+    const char *app_name;
+    char title[128];
+} _uninstall_ctx_t;
+
 /**
- * @brief Uninstall button callback
+ * @brief Uninstall confirmation panel callback (actual uninstall action)
  */
-static void _uninstall_btn_cb(lv_event_t *e)
+static void _uninstall_confirm_cb(lv_event_t *e)
 {
-    const char *app_id = (const char *)lv_event_get_user_data(e);
-    EOS_CHECK_PTR_RETURN(app_id);
-    eos_app_uninstall(app_id);
+    _uninstall_ctx_t *ctx = (_uninstall_ctx_t *)lv_event_get_user_data(e);
+    EOS_CHECK_PTR_RETURN(ctx);
+    eos_app_uninstall(ctx->app_id);
+    eos_free((void *)ctx->app_name);
+    eos_free(ctx);
     eos_activity_back();
 }
 
+/**
+ * @brief Uninstall button callback - shows confirmation panel
+ */
+static void _uninstall_btn_cb(lv_event_t *e)
+{
+    _uninstall_ctx_t *ctx = (_uninstall_ctx_t *)lv_event_get_user_data(e);
+    EOS_CHECK_PTR_RETURN(ctx);
+
+    eos_activity_t *current = eos_activity_get_current();
+    EOS_CHECK_PTR_RETURN(current);
+
+    snprintf(ctx->title, sizeof(ctx->title), "%s \"%s\"",
+             eos_lang_get_text(STR_ID_SETTINGS_APPS_UNINSTALL),
+             ctx->app_name ? ctx->app_name : ctx->app_id);
+
+    eos_panel_cfg_t cfg = {
+        .icon_bg_color = EOS_THEME_DANGEROS_COLOR,
+        .icon_type = EOS_PANEL_ICON_TYPE_SYMBOL,
+        .icon_src = RI_ALERT_FILL,
+        .title_text = ctx->title,
+        .message_id = STR_ID_SETTINGS_APPS_UNINSTALL_MSG,
+        .confirm_btn_id = STR_ID_SETTINGS_APPS_UNINSTALL,
+        .confirm_cb = NULL,
+        .cancel_btn_id = STR_ID_CANCEL,
+        .cancel_cb = NULL,
+    };
+
+    eos_panel_t *panel = eos_panel_create_on_activity(current, &cfg);
+    if (panel) {
+        lv_obj_add_event_cb(panel->confirm_btn, _uninstall_confirm_cb, LV_EVENT_CLICKED, ctx);
+    }
+}
+
+/**
+ * @brief Clear data confirmation panel callback (actual clear action)
+ */
+static void _clear_data_confirm_cb(lv_event_t *e)
+{
+    typedef struct {
+        const char *app_id;
+        lv_obj_t *orig_btn;
+    } _clear_data_ctx_t;
+    _clear_data_ctx_t *ctx = (_clear_data_ctx_t *)lv_event_get_user_data(e);
+    EOS_CHECK_PTR_RETURN(ctx);
+
+    char data_path[EOS_FS_PATH_MAX];
+    snprintf(data_path, sizeof(data_path), EOS_APP_DATA_DIR "%s", ctx->app_id);
+    if (eos_storage_rm_recursive(data_path) != EOS_OK)
+    {
+        EOS_LOG_E("Remove data failed");
+        eos_free(ctx);
+        return;
+    }
+    if (ctx->orig_btn) {
+        lv_obj_add_state(ctx->orig_btn, LV_STATE_DISABLED);
+    }
+    eos_toast_show_char_icon(
+        RI_CHECKBOX_CIRCLE_FILL,
+        EOS_COLOR_GREEN,
+        eos_lang_get_text(STR_ID_SETTINGS_APPS_CLEAR_DATA_SUCCESS));
+    eos_free(ctx);
+}
+
+/**
+ * @brief Clear data button callback - shows confirmation panel
+ */
 static void _clear_data_btn_cb(lv_event_t *e)
 {
     lv_obj_t *btn = lv_event_get_target(e);
     const char *app_id = (const char *)lv_event_get_user_data(e);
     EOS_CHECK_PTR_RETURN(app_id);
-    char data_path[EOS_FS_PATH_MAX];
-    snprintf(data_path, sizeof(data_path), EOS_APP_DATA_DIR "%s", app_id);
-    if (eos_storage_rm_recursive(data_path) != EOS_OK)
+
+    eos_activity_t *current = eos_activity_get_current();
+    EOS_CHECK_PTR_RETURN(current);
+
+    typedef struct {
+        const char *app_id;
+        lv_obj_t *orig_btn;
+    } _clear_data_ctx_t;
+    _clear_data_ctx_t *ctx = eos_malloc(sizeof(_clear_data_ctx_t));
+    EOS_CHECK_PTR_RETURN(ctx);
+    ctx->app_id = app_id;
+    ctx->orig_btn = btn;
+
+    eos_panel_cfg_t cfg = {
+        .icon_bg_color = EOS_THEME_DANGEROS_COLOR,
+        .icon_type = EOS_PANEL_ICON_TYPE_SYMBOL,
+        .icon_src = RI_ALERT_FILL,
+        .title_id = STR_ID_SETTINGS_APPS_CLEAR_DATA,
+        .message_text = app_id,
+        .confirm_btn_id = STR_ID_SETTINGS_APPS_CLEAR_DATA,
+        .confirm_cb = NULL,
+        .cancel_btn_id = STR_ID_CANCEL,
+        .cancel_cb = NULL,
+    };
+
+    eos_panel_t *panel = eos_panel_create_on_activity(current, &cfg);
+    if (panel) {
+        lv_obj_add_event_cb(panel->confirm_btn, _clear_data_confirm_cb, LV_EVENT_CLICKED, ctx);
+    }
+}
+
+/* ---- Forward declarations for permission radio page ---- */
+typedef struct {
+    const char *app_id;
+    eos_perm_category_t category;
+    lv_obj_t *state_label;  /* reference to status label for refresh */
+} _perm_radio_ctx_t;
+
+static void _perm_row_click_cb(lv_event_t *e);
+static void _perm_state_radio_cb(lv_event_t *e);
+
+/**
+ * @brief Permission entry button clicked - opens permission list page for this app
+ */
+static void _settings_perm_entry_clicked_cb(lv_event_t *e)
+{
+    const char *app_id = (const char *)lv_event_get_user_data(e);
+    EOS_CHECK_PTR_RETURN(app_id);
+
+    /* Read manifest to get permissions list */
+    char manifest_path[EOS_FS_PATH_MAX];
+    snprintf(manifest_path, sizeof(manifest_path), EOS_APP_INSTALLED_DIR "%s/" EOS_APP_MANIFEST_FILE_NAME,
+             app_id);
+    script_pkg_t pkg = {0};
+    if (script_engine_get_manifest(manifest_path, &pkg) != SE_OK)
     {
-        EOS_LOG_E("Remove data failed");
+        EOS_LOG_E("Read manifest failed: %s", manifest_path);
         return;
     }
-    lv_obj_add_state(btn, LV_STATE_DISABLED);
-    eos_toast_show_char_icon(
-        RI_CHECKBOX_CIRCLE_FILL,
-        EOS_COLOR_GREEN,
-        eos_lang_get_text(STR_ID_SETTINGS_APPS_CLEAR_DATA_SUCCESS));
+
+    eos_activity_t *a = eos_activity_create(NULL);
+    EOS_CHECK_PTR_RETURN(a);
+    lv_obj_t *view = eos_activity_get_view(a);
+    EOS_CHECK_PTR_RETURN(view);
+
+    eos_activity_set_title_id(a, STR_ID_PERM_TITLE);
+    eos_activity_set_app_header_visible(a, true);
+
+    lv_obj_t *list = eos_list_create(view);
+
+    if (pkg.permission_count == 0)
+    {
+        eos_list_add_comment(list, eos_lang_get_text(STR_ID_PERM_NO_PERMISSIONS));
+    }
+    else
+    {
+        for (uint8_t i = 0; i < pkg.permission_count; i++)
+        {
+            if (!pkg.permissions[i]) continue;
+
+            eos_perm_category_t cat = eos_permission_name_to_category(pkg.permissions[i]);
+            if (cat >= EOS_PERM_CATEGORY_COUNT) continue;
+
+            const char *perm_display_name = eos_permission_category_name(cat);
+            eos_perm_state_t current_state = eos_permission_get(app_id, cat);
+            const char *state_label = eos_lang_get_text(eos_permission_state_label_id(current_state));
+
+            /* Create entry button: top=name(white), bottom=status(grey) */
+            lv_obj_t *perm_btn = eos_list_add_entry_button(list, perm_display_name ? perm_display_name : "");
+
+            /* Switch to vertical two-line layout */
+            lv_obj_set_flex_flow(perm_btn, LV_FLEX_FLOW_COLUMN);
+            lv_obj_set_flex_align(perm_btn,
+                                  LV_FLEX_ALIGN_START,
+                                  LV_FLEX_ALIGN_START,
+                                  LV_FLEX_ALIGN_CENTER);
+
+            /* Permission name: white text (top line), left-aligned */
+            lv_obj_t *name_label = lv_obj_get_child(perm_btn, 0);
+            if (name_label)
+            {
+                lv_obj_set_style_text_color(name_label, EOS_COLOR_WHITE, 0);
+                lv_obj_set_style_text_align(name_label, LV_TEXT_ALIGN_LEFT, 0);
+                lv_obj_set_flex_grow(name_label, 0);
+                /* Label must fill button width for text-align-left to be visible */
+                lv_obj_set_width(name_label, lv_pct(100));
+            }
+
+            /* Replace the right-side arrow label with permission state text (bottom line) */
+            lv_obj_t *state_label_obj = lv_obj_get_child(perm_btn, 1);
+            if (state_label_obj && state_label)
+            {
+                lv_label_set_text(state_label_obj, state_label);
+                /* Permission status: grey text, left-aligned */
+                lv_obj_set_style_text_color(state_label_obj, EOS_COLOR_GREY, 0);
+                lv_obj_set_style_text_align(state_label_obj, LV_TEXT_ALIGN_LEFT, 0);
+                lv_obj_set_width(state_label_obj, lv_pct(100));
+            }
+
+            /* Allocate context for radio page callback */
+            _perm_radio_ctx_t *radio_ctx = eos_malloc(sizeof(_perm_radio_ctx_t));
+            if (radio_ctx)
+            {
+                radio_ctx->app_id = app_id;
+                radio_ctx->category = cat;
+                radio_ctx->state_label = state_label_obj;
+                lv_obj_add_event_cb(perm_btn, _perm_row_click_cb, LV_EVENT_CLICKED, radio_ctx);
+            }
+        }
+    }
+
+    eos_activity_enter(a);
+    eos_pkg_free(&pkg);
+}
+
+/**
+ * @brief Permission state radio selection callback
+ */
+static void _perm_state_radio_cb(lv_event_t *e)
+{
+    _perm_radio_ctx_t *ctx = (_perm_radio_ctx_t *)lv_event_get_user_data(e);
+    EOS_CHECK_PTR_RETURN(ctx);
+
+    uint32_t selected = (uint32_t)(uintptr_t)lv_event_get_param(e);
+    if (selected <= EOS_PERM_STATE_ALLOW_ALWAYS)
+    {
+        eos_permission_set(ctx->app_id, ctx->category, (eos_perm_state_t)selected);
+        EOS_LOG_D("Permission state changed: app=%s cat=%d state=%lu", ctx->app_id, ctx->category, selected);
+
+        /* Refresh status label text on the list page */
+        if (ctx->state_label && lv_obj_is_valid(ctx->state_label))
+        {
+            const char *new_state_label = eos_lang_get_text(
+                eos_permission_state_label_id((eos_perm_state_t)selected));
+            lv_label_set_text(ctx->state_label, new_state_label ? new_state_label : "");
+        }
+
+        eos_activity_back();
+    }
+}
+
+/**
+ * @brief Permission row click callback - opens radio page for state selection
+ */
+static void _perm_row_click_cb(lv_event_t *e)
+{
+    _perm_radio_ctx_t *ctx = (_perm_radio_ctx_t *)lv_event_get_user_data(e);
+    EOS_CHECK_PTR_RETURN(ctx);
+
+    eos_perm_state_t current_state = eos_permission_get(ctx->app_id, ctx->category);
+    const char *perm_name = eos_permission_category_name(ctx->category);
+
+    eos_radio_page_t *rp = eos_radio_page_create(perm_name ? perm_name : "");
+    eos_radio_page_add_item(rp, eos_lang_get_text(STR_ID_PERM_STATE_DENIED));
+    eos_radio_page_add_item(rp, eos_lang_get_text(STR_ID_PERM_ALLOW_ONCE));
+    eos_radio_page_add_item(rp, eos_lang_get_text(STR_ID_PERM_ALLOW_FOREGROUND));
+    eos_radio_page_add_item(rp, eos_lang_get_text(STR_ID_PERM_STATE_ALLOW_ALWAYS));
+    eos_radio_page_add_event_cb(rp, _perm_state_radio_cb, ctx);
+    eos_radio_page_check(rp, (uint32_t)current_state);
+    eos_radio_page_show(rp);
 }
 
 /**
@@ -532,6 +787,21 @@ static void _settings_app_list_btn_cb(lv_event_t *e)
         lv_label_set_long_mode(desc_label, LV_LABEL_LONG_WRAP);
     }
 
+    /* ---- Permission Entry ---- */
+    if (pkg.permission_count > 0)
+    {
+        eos_list_add_title(list, eos_lang_get_text(STR_ID_PERM_TITLE));
+        lv_obj_t *perm_entry_btn = eos_list_add_button(
+            list,NULL, eos_lang_get_text(STR_ID_PERM_TITLE));
+        /* Store app_id for the callback - must persist until activity is destroyed */
+        char *stored_app_id = eos_strdup(app_id);
+        lv_obj_add_event_cb(perm_entry_btn, _settings_perm_entry_clicked_cb,
+                            LV_EVENT_CLICKED, stored_app_id);
+        /* Free stored_app_id when button is deleted */
+        lv_obj_add_event_cb(perm_entry_btn, _free_user_data_on_delete_cb,
+                            LV_EVENT_DELETE, stored_app_id);
+    }
+
     eos_list_add_placeholder(list, EOS_LIST_SECTION_PLACEHOLDER_HEIGHT);
 
     lv_obj_t *clear_data_btn = eos_button_create_ex(
@@ -551,13 +821,20 @@ static void _settings_app_list_btn_cb(lv_event_t *e)
         lv_obj_add_state(clear_data_btn, LV_STATE_DISABLED);
     }
 
+    _uninstall_ctx_t *uninstall_ctx = eos_malloc(sizeof(_uninstall_ctx_t));
+    if (uninstall_ctx)
+    {
+        uninstall_ctx->app_id = app_id;
+        uninstall_ctx->app_name = eos_strdup(pkg.name);
+    }
+
     lv_obj_t *uninstall_btn = eos_button_create_ex(
         list,
         EOS_THEME_SECONDARY_COLOR,
         eos_lang_get_text(STR_ID_SETTINGS_APPS_UNINSTALL),
         EOS_THEME_DANGEROS_COLOR,
         _uninstall_btn_cb,
-        app_id);
+        uninstall_ctx);
 
     (void)uninstall_btn;
     eos_activity_enter(a);

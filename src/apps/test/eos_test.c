@@ -43,6 +43,7 @@
 #include "battery/eos_test_battery_history.h"
 #include "package/eos_test_package.h"
 #include "input/eos_test_input_page.h"
+#include "permission/eos_test_permission.h"
 #include "eos_crown.h"
 #include "eos_app_header.h"
 #include "eos_service_storage.h"
@@ -1832,6 +1833,12 @@ static void _test_package_cb(lv_event_t *e)
     eos_test_package_start();
 }
 
+static void _test_permission_cb(lv_event_t *e)
+{
+    (void)e;
+    eos_test_permission_start();
+}
+
 /* Uncomment one of the following to test different apps: */
 #define SPM_STRESS_TEST_APP_ID  "com.elenixos.test"
 /* #define SPM_STRESS_TEST_APP_ID  "com.elenixos.empty_test" */
@@ -2071,6 +2078,9 @@ void eos_test_start(void)
     // 插件安装测试
     btn = lv_list_add_button(test_list, LV_SYMBOL_FILE, "Package Installer");
     lv_obj_add_event_cb(btn, _test_package_cb, LV_EVENT_CLICKED, NULL);
+    // 权限系统测试
+    btn = lv_list_add_button(test_list, RI_SHIELD_CHECK_LINE, "Permission System");
+    lv_obj_add_event_cb(btn, _test_permission_cb, LV_EVENT_CLICKED, NULL);
     // 音频播放测试
     btn = lv_list_add_button(test_list, LV_SYMBOL_AUDIO, "Audio Playback");
     lv_obj_add_event_cb(btn, _test_audio_page, LV_EVENT_CLICKED, NULL);

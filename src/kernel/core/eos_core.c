@@ -51,6 +51,8 @@
 #include "eos_toast.h"
 #include "eos_service_haptic.h"
 #include "eos_crown.h"
+#include "eos_service_permission.h"
+#include "eos_overlay_layer.h"
 #include "eos_icon.h"
 #include "eos_activity.h"
 #include "eos_std_widgets.h"
@@ -168,6 +170,7 @@ void eos_init(void)
     spm_init();
     eos_service_config_init();
     eos_service_state_init();
+    eos_service_permission_init();
     eos_service_battery_init();
     lv_font_t *default_font = eos_font_init();
     if (!default_font)
@@ -177,6 +180,7 @@ void eos_init(void)
                   default_font);
     eos_app_init();
     eos_watchface_init();
+    eos_overlay_layer_init();
     eos_app_header_init();
     eos_msg_list_init();
     eos_control_center_init();

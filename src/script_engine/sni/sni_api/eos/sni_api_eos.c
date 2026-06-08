@@ -26,6 +26,7 @@
 #include "eos_service_storage.h"
 #include "eos_app_header.h"
 #include "eos_ww_clock_hand.h"
+#include "sni_api_eos_permission.h"
 /* Macros and Definitions -------------------------------------*/
 #define EOS_API_NAME "eos"
 #define CONSOLE_LOG_TAG script_engine_get_current_script_id()
@@ -1313,6 +1314,22 @@ const sni_class_desc_t eos_class_desc_activity = {
     .constants = NULL,
 };
 
+const sni_method_desc_t eos_class_static_methods_permission[] = {
+    {.name = "request", .handler = sni_api_eos_permission_request},
+    {.name = "check", .handler = sni_api_eos_permission_check},
+    {.name = NULL, .handler = NULL},
+};
+
+const sni_class_desc_t eos_class_desc_permission = {
+    .name = "permission",
+    .constructor = NULL,
+    .base_class = NULL,
+    .methods = NULL,
+    .properties = NULL,
+    .static_methods = eos_class_static_methods_permission,
+    .constants = NULL,
+};
+
 const sni_class_desc_t *const eos_api_classes[] = {
     &eos_class_desc_view,
     &eos_class_desc_console,
@@ -1321,6 +1338,7 @@ const sni_class_desc_t *const eos_api_classes[] = {
     &eos_class_desc_app_header,
     &eos_class_desc_clock_hand,
     &eos_class_desc_activity,
+    &eos_class_desc_permission,
     NULL,
 };
 

@@ -60,6 +60,8 @@ typedef struct {
     const char *description;
     const char *script_str;
     const char *base_path;
+    const char **permissions;      /**< Array of permission name strings */
+    uint8_t     permission_count;  /**< Number of permissions declared */
 } script_pkg_t;
 
 typedef struct {
@@ -142,6 +144,7 @@ uint32_t script_engine_get_backtrace_count(void);
 char *script_engine_get_current_script_id(void);
 char *script_engine_get_current_script_name(void);
 script_pkg_type_t script_engine_get_current_script_type(void);
+bool script_engine_has_permission(const char *perm_name);
 uint32_t script_engine_get_timeout(void);
 void script_engine_set_timeout(uint32_t timeout_ms);
 /**@}*/

@@ -23,6 +23,7 @@
 #include "eos_activity.h"
 #include "eos_service_time.h"
 #include "eos_event.h"
+#include "eos_overlay_layer.h"
 
 /* Macros and Definitions -------------------------------------*/
 #define _HEADER_HEIGHT 120
@@ -52,6 +53,8 @@ typedef struct
     lv_obj_t *back_btn;
     lv_timer_t *clock_timer;
     lv_obj_t *original_parent; // Original parent object for restoration
+    lv_obj_t *old_fading_title; // Old title label pending cleanup
+    lv_obj_t *old_fading_back_btn; // Old back button pending cleanup
     bool is_anim_entering; // Animation direction
     bool attached_to_view; // Whether attached to View
 } eos_app_header_t;
@@ -207,6 +210,19 @@ void _play_title_changed_anim(eos_activity_t *from, eos_activity_t *to, bool nee
         return;
     }
 
+    // Clean up previously faded-out labels that are pending deletion.
+    // These were left behind by the previous title animation (auto_delete=false).
+    if (app_header->old_fading_title && lv_obj_is_valid(app_header->old_fading_title))
+    {
+        lv_obj_delete(app_header->old_fading_title);
+    }
+    if (app_header->old_fading_back_btn && lv_obj_is_valid(app_header->old_fading_back_btn))
+    {
+        lv_obj_delete(app_header->old_fading_back_btn);
+    }
+    app_header->old_fading_title = NULL;
+    app_header->old_fading_back_btn = NULL;
+
     // 确定动画方向
     if (reverse_anim) {
         app_header->is_anim_entering = false;
@@ -239,11 +255,15 @@ void _play_title_changed_anim(eos_activity_t *from, eos_activity_t *to, bool nee
 
     // 原始按钮从默认位置移动到目标位置
     eos_anim_move_start(l, title_start_x, 0, title_end_x, 0, _ANIM_DURATION, false);
-    eos_anim_fade_start(l, LV_OPA_COVER, LV_OPA_TRANSP, _ANIM_DURATION + 1, true);
+    eos_anim_fade_start(l, LV_OPA_COVER, LV_OPA_TRANSP, _ANIM_DURATION + 1, false);
 
     // 原始 back_btn 从默认位置移动到目标位置
     eos_anim_move_start(back_btn, back_btn_start_x, 0, back_btn_end_x, 0, _ANIM_DURATION, false);
-    eos_anim_fade_start(back_btn, LV_OPA_COVER, LV_OPA_TRANSP, _ANIM_DURATION + 1, true); // 淡出后自动删除
+    eos_anim_fade_start(back_btn, LV_OPA_COVER, LV_OPA_TRANSP, _ANIM_DURATION + 1, false);
+
+    // Track these for cleanup on the next transition
+    app_header->old_fading_title = l;
+    app_header->old_fading_back_btn = back_btn;
 
     // 创建新的 title_label 和 back_btn
     lv_obj_t *new_l = lv_label_create(parent);
@@ -328,7 +348,7 @@ void eos_app_header_hide(void)
         lv_obj_t *restore_parent = app_header->original_parent;
         if (!restore_parent || !lv_obj_is_valid(restore_parent))
         {
-            restore_parent = lv_layer_sys();
+            restore_parent = eos_overlay_get_header_layer();
             app_header->original_parent = restore_parent;
         }
 
@@ -373,7 +393,7 @@ void eos_app_header_show(eos_activity_t *a)
         lv_obj_t *restore_parent = app_header->original_parent;
         if (!restore_parent || !lv_obj_is_valid(restore_parent))
         {
-            restore_parent = lv_layer_sys();
+            restore_parent = eos_overlay_get_header_layer();
             app_header->original_parent = restore_parent;
         }
 
@@ -548,7 +568,7 @@ void eos_app_header_attach_to_view(lv_obj_t *view)
 
     if (!app_header->original_parent || !lv_obj_is_valid(app_header->original_parent))
     {
-        app_header->original_parent = lv_layer_sys();
+        app_header->original_parent = eos_overlay_get_header_layer();
     }
 
     lv_obj_set_parent(app_header->container, view);
@@ -569,7 +589,7 @@ void eos_app_header_detach_from_view(void)
     lv_obj_t *restore_parent = app_header->original_parent;
     if (!restore_parent || !lv_obj_is_valid(restore_parent))
     {
-        restore_parent = lv_layer_sys();
+        restore_parent = eos_overlay_get_header_layer();
         app_header->original_parent = restore_parent;
     }
 
@@ -619,12 +639,11 @@ void eos_app_header_init(void)
     grad.stops[1].frac = 255;
 
     // 半透明容器
-    app_header->container = lv_obj_create(lv_layer_sys());
+    app_header->container = lv_obj_create(eos_overlay_get_header_layer());
     app_header->original_parent = lv_obj_get_parent(app_header->container); // 保存原始父对象
     lv_obj_remove_style_all(app_header->container);
     lv_obj_set_size(app_header->container, EOS_DISPLAY_WIDTH, _HEADER_HEIGHT);
     lv_obj_align(app_header->container, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_move_background(app_header->container);
     lv_obj_set_style_bg_grad(app_header->container, &grad, 0);
     lv_obj_set_style_bg_opa(app_header->container, LV_OPA_COVER, 0);
     lv_obj_remove_flag(app_header->container, LV_OBJ_FLAG_SCROLLABLE);

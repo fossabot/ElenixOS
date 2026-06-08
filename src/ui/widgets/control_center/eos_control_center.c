@@ -29,6 +29,7 @@
 #include "eos_crown.h"
 #include "eos_service_battery.h"
 #include "eos_chrome_manager.h"
+#include "eos_overlay_layer.h"
 
 /* Macros and Definitions -------------------------------------*/
 #define _BTN_DEFAULT_COLOR EOS_THEME_SECONDARY_COLOR
@@ -149,7 +150,7 @@ static void _control_center_slider_page_clicked_cb(lv_event_t *e)
 
 static lv_obj_t *_control_center_slider_create(const char *symbol)
 {
-    lv_obj_t *slider_page = lv_obj_create(lv_layer_top());
+    lv_obj_t *slider_page = lv_obj_create(eos_overlay_get_overlay_layer());
     lv_obj_remove_style_all(slider_page);
     lv_obj_set_size(slider_page, lv_pct(100), lv_pct(100));
     lv_obj_move_foreground(slider_page);
@@ -631,7 +632,7 @@ static void _system_config_update_event_cb(eos_event_t *e)
 
 void eos_control_center_init(void)
 {
-    control_center_instance = eos_control_center_create(lv_layer_top());
+    control_center_instance = eos_control_center_create(eos_overlay_get_overlay_layer());
     eos_event_subscribe(EOS_EVENT_SYSTEM_CONFIG_UPDATE, _system_config_update_event_cb, NULL);
 }
 

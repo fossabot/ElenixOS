@@ -19,7 +19,7 @@
 #include "eos_dispatcher.h"
 #include "eos_dfw.h"
 /* Macros and Definitions -------------------------------------*/
-#define DEBUG_DISABLE_TIMER 0       /**< [Debug] Whether to disable the timer */
+#define DEBUG_DISABLE_TIMER 1       /**< [Debug] Whether to disable the timer */
 #define _DEFAULT_TIMEOUT_SEC 15
 /* Variables --------------------------------------------------*/
 static lv_timer_t *t; /**< Sleep timer, triggers sleep mode after timeout */

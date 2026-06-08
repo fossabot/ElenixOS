@@ -118,6 +118,8 @@ lv_obj_t *eos_button_create_ex(lv_obj_t *parent,
     lv_obj_set_size(btn, lv_pct(100), EOS_THEME_BUTTON_HEIGHT);
     lv_obj_set_style_bg_color(btn, btn_color, 0);
     lv_obj_set_style_radius(btn, LV_RADIUS_CIRCLE, 0);
+    lv_obj_remove_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(btn, LV_DIR_NONE);
 
     lv_obj_t *label = lv_label_create(btn);
     lv_label_set_text(label, txt);
@@ -1186,6 +1188,7 @@ lv_obj_t *eos_row_create(lv_obj_t *parent,
 {
     lv_obj_t *row = lv_obj_create(parent);
     lv_obj_remove_style_all(row);
+    lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_size(row, lv_pct(100), LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(row,

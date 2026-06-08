@@ -59,6 +59,14 @@ static void _script_free(script_pkg_t *p)
     if (p->description) { eos_free((void *)p->description); p->description = NULL; }
     if (p->script_str)  { eos_free((void *)p->script_str); p->script_str = NULL; }
     if (p->base_path)   { eos_free((void *)p->base_path); p->base_path = NULL; }
+    if (p->permissions) {
+        for (uint8_t i = 0; i < p->permission_count; i++) {
+            if (p->permissions[i]) eos_free((void *)p->permissions[i]);
+        }
+        eos_free(p->permissions);
+        p->permissions = NULL;
+        p->permission_count = 0;
+    }
 }
 
 static void _program_destroy(script_program_t *prog)
@@ -111,6 +119,21 @@ static void _pkg_clone(script_pkg_t *dst, const script_pkg_t *src)
     dst->description = src->description ? eos_strdup(src->description) : NULL;
     dst->script_str = src->script_str ? eos_strdup(src->script_str) : NULL;
     dst->base_path = src->base_path ? eos_strdup(src->base_path) : NULL;
+
+    /* Clone permissions array */
+    if (src->permissions && src->permission_count > 0)
+    {
+        dst->permissions = (const char **)eos_malloc(sizeof(const char *) * (src->permission_count + 1));
+        if (dst->permissions)
+        {
+            for (uint8_t i = 0; i < src->permission_count; i++)
+            {
+                dst->permissions[i] = src->permissions[i] ? eos_strdup(src->permissions[i]) : NULL;
+            }
+            dst->permissions[src->permission_count] = NULL;
+            dst->permission_count = src->permission_count;
+        }
+    }
 }
 
 /* SPM Lifecycle -----------------------------------------------*/

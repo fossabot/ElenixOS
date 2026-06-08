@@ -28,6 +28,7 @@
 #include "eos_basic_widgets.h"
 #include "eos_icon.h"
 #include "eos_panel.h"
+#include "eos_service_permission.h"
 #include "eos_fault_panel.h"
 #include "eos_font.h"
 #include "sni_callback_runtime.h"
@@ -495,6 +496,9 @@ eos_result_t eos_app_uninstall(const char *app_id)
 
     _eos_app_order_remove(app_id);
     _eos_app_list_refresh();
+
+    /* Clean up permission grants for this app */
+    eos_permission_revoke_all(app_id);
 
     eos_event_post(EOS_EVENT_APP_UNINSTALLED, (void *)app_id, NULL);
 

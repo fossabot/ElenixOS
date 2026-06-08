@@ -22,7 +22,7 @@
 #include "eos_service_lock.h"
 #include "eos_service_time.h"
 #include "eos_service_haptic.h"
-#include "eos_app_header.h"
+#include "eos_overlay_layer.h"
 #include "eos_numpad.h"
 
 /* Macros and Definitions -------------------------------------*/
@@ -228,16 +228,13 @@ void eos_lock_page_show(void)
     bool simple = eos_config_get_bool(EOS_CONFIG_KEY_PASSWORD_SIMPLE_BOOL, true);
     uint8_t target_length = simple ? 4 : 6;
 
-    /* Build UI on lv_layer_top() — absolute top z-order security barrier */
-    _create_lock_ui(_ctx, lv_layer_top(), target_length);
+    /* Build UI on overlay layer — naturally above header_layer on lv_layer_top */
+    _create_lock_ui(_ctx, eos_overlay_get_overlay_layer(), target_length);
 
-    /* Ensure absolute top z-order — above header and any other overlays */
+    /* Ensure top z-order within overlay layer */
     if (_ctx->root) {
         lv_obj_move_foreground(_ctx->root);
     }
-
-    /* Security: hide header so it cannot appear above lock screen on any layer */
-    eos_app_header_hide();
 
     EOS_LOG_I("Lock screen shown (security barrier)");
 }
@@ -251,16 +248,8 @@ void eos_lock_page_hide(void)
     _destroy_lock_ui(_ctx);
     _ctx = NULL;
 
-    /* Restore header state based on underlying activity's setting */
-    eos_activity_t *current = eos_activity_get_current();
-    if (current && eos_activity_is_app_header_visible(current))
-    {
-        eos_app_header_show(current);
-    }
-    else
-    {
-        eos_app_header_hide();
-    }
+    /* Header visibility is managed by the activity system — no manual restore needed.
+     * The overlay_layer naturally covered the header_layer while the lock was active. */
 
     EOS_LOG_I("Lock screen hidden");
 }

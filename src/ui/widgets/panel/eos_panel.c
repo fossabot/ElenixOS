@@ -21,7 +21,6 @@
 
 #define _PANEL_PAD_TOP 60
 #define _PANEL_PAD_BOTTOM 40
-#define _PANEL_BUTTON_HEIGHT 100
 #define _PANEL_BUTTON_RADIUS LV_RADIUS_CIRCLE
 
 /* Function Implementations ----------------------------------*/
@@ -157,19 +156,43 @@ static void _eos_panel_build_content(eos_panel_t *panel, const eos_panel_cfg_t *
     panel->actions = lv_obj_create(container);
     lv_obj_remove_style_all(panel->actions);
     lv_obj_set_size(panel->actions, EOS_PANEL_CONTENT_WIDTH, LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(panel->actions, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_flow(panel->actions, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(panel->actions, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_all(panel->actions, 10, 0);
     lv_obj_set_style_border_width(panel->actions, 0, 0);
-    lv_obj_set_style_pad_column(panel->actions, 10, 0);
+    lv_obj_set_style_pad_row(panel->actions, 10, 0);
 
     lv_obj_align_to(panel->actions, panel->extra_slot, LV_ALIGN_OUT_BOTTOM_MID, 0, 0);
 
+    /* Confirm button (top) */
+    if (cfg->confirm_btn_id != 0 || cfg->confirm_btn_text != NULL)
+    {
+        panel->confirm_btn = lv_btn_create(panel->actions);
+        lv_obj_set_size(panel->confirm_btn, LV_PCT(100), EOS_THEME_BUTTON_HEIGHT);
+        lv_obj_set_style_radius(panel->confirm_btn, _PANEL_BUTTON_RADIUS, 0);
+
+        lv_obj_t *confirm_label = lv_label_create(panel->confirm_btn);
+        if (cfg->confirm_btn_id != 0)
+        {
+            eos_label_set_text_id(confirm_label, cfg->confirm_btn_id);
+        }
+        else
+        {
+            lv_label_set_text(confirm_label, cfg->confirm_btn_text);
+        }
+        lv_obj_center(confirm_label);
+
+        if (cfg->confirm_cb != NULL)
+        {
+            lv_obj_add_event_cb(panel->confirm_btn, cfg->confirm_cb, LV_EVENT_CLICKED, NULL);
+        }
+    }
+
+    /* Cancel button (bottom) */
     if (cfg->cancel_btn_id != 0 || cfg->cancel_btn_text != NULL)
     {
         panel->cancel_btn = lv_btn_create(panel->actions);
-        lv_obj_set_height(panel->cancel_btn, _PANEL_BUTTON_HEIGHT);
-        lv_obj_set_flex_grow(panel->cancel_btn, 1);
+        lv_obj_set_size(panel->cancel_btn, LV_PCT(100), EOS_THEME_BUTTON_HEIGHT);
         lv_obj_set_style_radius(panel->cancel_btn, _PANEL_BUTTON_RADIUS, 0);
 
         lv_obj_t *cancel_label = lv_label_create(panel->cancel_btn);
@@ -189,31 +212,7 @@ static void _eos_panel_build_content(eos_panel_t *panel, const eos_panel_cfg_t *
         }
         else
         {
-            lv_obj_add_event_cb(panel->cancel_btn, _panel_default_cancel_cb, LV_EVENT_CLICKED, NULL);
-        }
-    }
-
-    if (cfg->confirm_btn_id != 0 || cfg->confirm_btn_text != NULL)
-    {
-        panel->confirm_btn = lv_btn_create(panel->actions);
-        lv_obj_set_height(panel->confirm_btn, _PANEL_BUTTON_HEIGHT);
-        lv_obj_set_flex_grow(panel->confirm_btn, 1);
-        lv_obj_set_style_radius(panel->confirm_btn, _PANEL_BUTTON_RADIUS, 0);
-
-        lv_obj_t *confirm_label = lv_label_create(panel->confirm_btn);
-        if (cfg->confirm_btn_id != 0)
-        {
-            eos_label_set_text_id(confirm_label, cfg->confirm_btn_id);
-        }
-        else
-        {
-            lv_label_set_text(confirm_label, cfg->confirm_btn_text);
-        }
-        lv_obj_center(confirm_label);
-
-        if (cfg->confirm_cb != NULL)
-        {
-            lv_obj_add_event_cb(panel->confirm_btn, cfg->confirm_cb, LV_EVENT_CLICKED, NULL);
+            lv_obj_add_event_cb(panel->cancel_btn, _panel_default_cancel_cb, LV_EVENT_CLICKED, panel);
         }
     }
 }
@@ -223,16 +222,21 @@ eos_panel_t *eos_panel_create_on_activity(eos_activity_t *activity, const eos_pa
     EOS_CHECK_PTR_RETURN_VAL(cfg, NULL);
 
     lv_obj_t *view = eos_activity_get_view(activity);
-    if (view)
+    if (!view)
     {
-        lv_obj_clean(view);
-        lv_obj_remove_style_all(view);
-        lv_obj_add_style(view, eos_theme_get_view_style(), 0);
+        return NULL;
     }
 
+    /* Create panel as a fullscreen overlay on top of the existing view,
+     * so that deleting it restores the original content underneath */
     eos_activity_set_app_header_visible(activity, false);
 
-    eos_panel_t *panel = eos_panel_create(view ? view : (lv_obj_t *)activity, cfg);
+    eos_panel_t *panel = eos_panel_create(view, cfg);
+    if (panel && panel->container)
+    {
+        lv_obj_set_pos(panel->container, 0, 0);
+        lv_obj_move_foreground(panel->container);
+    }
     return panel;
 }
 
@@ -252,6 +256,8 @@ eos_panel_t *eos_panel_create(lv_obj_t *parent, const eos_panel_cfg_t *cfg)
     lv_obj_set_size(panel->container, LV_PCT(100), LV_PCT(100));
     lv_obj_set_flex_flow(panel->container, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(panel->container, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_bg_color(panel->container, EOS_COLOR_BLACK, 0);
+    lv_obj_set_style_bg_opa(panel->container, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(panel->container, 0, 0);
     lv_obj_set_scrollbar_mode(panel->container, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_style_pad_row(panel->container, 20, 0);
